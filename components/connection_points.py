@@ -153,16 +153,25 @@ class ConnectionPoint(QGraphicsEllipseItem):
         self.point_id = point_id
         self.connected_wires = []  # List of wires connected to this point
 
+        # Determine role-based base color
+        if point_id == 'in':
+            self.base_color = QColor(0, 150, 0)          # green for input
+        elif point_id == 'out':
+            self.base_color = QColor(220, 140, 0)        # orange for output
+        elif point_id in ('pos', 'neg'):
+            self.base_color = QColor(180, 0, 180)        # magenta for source terminals
+        else:  # terminal or other
+            self.base_color = QColor(255, 0, 0)          # red default
+
         # Set position relative to parent component
         self.setPos(pos_x, pos_y)
         self.setParentItem(parent_component)
 
         # Set appearance
-        self.setBrush(QBrush(QColor(255, 0, 0)))  # Red connection points
+        self.setBrush(QBrush(self.base_color))
         self.setPen(QPen(QColor(0, 0, 0), 2))
 
-        # Make it clickable
-        self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsSelectable)
+        # NOT selectable (prevent deletion)
         self.setAcceptHoverEvents(True)
 
     def mousePressEvent(self, event):
@@ -172,20 +181,23 @@ class ConnectionPoint(QGraphicsEllipseItem):
         super().mousePressEvent(event)
 
     def hoverEnterEvent(self, event):
-        self.setBrush(QBrush(QColor(255, 100, 100)))  # Lighter red on hover
+        # Lighten on hover
+        c = self.base_color.lighter(130)
+        self.setBrush(QBrush(c))
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
+        # Restore highlight state or base color
         if not self.isSelected():
-            self.setBrush(QBrush(QColor(255, 0, 0)))  # Back to red
+            self.setBrush(QBrush(self.base_color))
         super().hoverLeaveEvent(event)
 
     def highlight(self, highlight=True):
-        """Highlight this connection point"""
+        """Highlight this connection point (slightly brighter)"""
         if highlight:
-            self.setBrush(QBrush(QColor(0, 255, 0)))  # Green when highlighted
+            self.setBrush(QBrush(self.base_color.lighter(170)))
         else:
-            self.setBrush(QBrush(QColor(255, 0, 0)))  # Red normally
+            self.setBrush(QBrush(self.base_color))
 
     def get_scene_pos(self):
         """Get the absolute position of this connection point in scene coordinates"""

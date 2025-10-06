@@ -6,11 +6,11 @@ from PyQt6.QtWidgets import (
     QSplitter, QGraphicsScene, QMessageBox, QFileDialog
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPen, QColor, QKeySequence
+from PyQt6.QtGui import QPen, QColor
 
 from components import (
-    Wire, ConnectionPoint, BendPoint, JunctionPoint,
-    ComponentItem, DraggableButton, DroppableGraphicsView
+    Wire, JunctionPoint,
+    ComponentItem, DroppableGraphicsView
 )
 
 # Import the new UI components
@@ -55,20 +55,32 @@ class MainWindow(QMainWindow):
         # Main vertical layout
         self.verticalLayout_central = QVBoxLayout(self.centralwidget)
 
-        # Main splitter (horizontal)
+        # Create the existing horizontal splitter (three panels side-by-side)
         self.splitterMain = QSplitter(Qt.Orientation.Horizontal)
-        self.verticalLayout_central.addWidget(self.splitterMain)
 
-        # Setup the three main sections
+        # NEW: wrap horizontal splitter + log panel inside a vertical splitter for resizable log height
+        self.mainVerticalSplitter = QSplitter(Qt.Orientation.Vertical)
+        self.mainVerticalSplitter.addWidget(self.splitterMain)
+        self.verticalLayout_central.addWidget(self.mainVerticalSplitter)
+
+        # Setup the three main sections into splitterMain
         self.setupComponentsSection()
         self.setupSandboxSection()
         self.setupInspectSection()
 
-        # Setup log section
+        # Setup log section (will add log panel as second widget of vertical splitter)
         self.setupLogSection()
 
         # Setup toolbar and connect signals
         self.setupToolbarAndConnections()
+
+        # Stretch factors: give more space to upper area initially
+        self.mainVerticalSplitter.setStretchFactor(0, 5)
+        self.mainVerticalSplitter.setStretchFactor(1, 1)
+
+        # After full UI init, normalize connection points (in case of hot reload / persisted state)
+        if hasattr(self, 'refresh_all_component_connection_points'):
+            self.refresh_all_component_connection_points()
 
     def setupComponentsSection(self):
         """Setup the Components (Componenten) section"""
@@ -108,34 +120,113 @@ class MainWindow(QMainWindow):
         self.canvas_tools.probe_requested.connect(self.on_probe)
 
     def drawGrid(self):
-        """Draw the grid on the graphics scene"""
-        # Create a 15x15 grid with square cells
-        scene_width = 1000  # Scene width
-        scene_height = 600  # Scene height
+        """Draw the grid on the graphics scene with an outer non-placeable border.
+        Visual grid: (placement_cells + 2) cells per side (adds 1 cell border on each side).
+        Placement grid (where components may snap/occupy): placement_cells per side (original 15).
+        Components are clamped to placement grid via graphicsViewSandbox.grid_rect.
+        """
+        # Configuration
+        placement_cells = 15
+        border_thickness_cells = 1  # one cell each side
+        visual_cells = placement_cells + 2 * border_thickness_cells
 
-        # Use the smaller dimension to ensure square cells
-        min_dimension = min(scene_width, scene_height)
-        grid_spacing = min_dimension / 15  # Same spacing for both directions to create squares
+        # Base scene dimension previously 1000x600 leading to blank space; derive spacing from a square target height
+        # Keep same spacing logic so internal cell size stable relative to previous behavior.
+        target_height = 600  # legacy vertical dimension baseline
+        grid_spacing = target_height / placement_cells  # cell size
 
-        # Update the grid spacing in the graphics view
+        # Dimensions
+        placement_width = placement_cells * grid_spacing
+        placement_height = placement_cells * grid_spacing
+        visual_width = visual_cells * grid_spacing
+        visual_height = visual_cells * grid_spacing
+
+        # Offsets (centered at origin). Placement rect inset by 1 cell within visual rect
+        placement_left = -placement_width / 2
+        placement_top = -placement_height / 2
+        visual_left = -visual_width / 2
+        visual_top = -visual_height / 2
+
+        # Clear ONLY previous grid lines (keep components if re-drawing). Detect by custom data flag.
+        for item in self.scene.items():
+            try:
+                if hasattr(item, 'data') and item.data(0) in ('grid', 'grid-border'):
+                    self.scene.removeItem(item)
+            except Exception:
+                pass
+
+        # Update graphics view spacing
         self.graphicsViewSandbox.grid_spacing = grid_spacing
 
-        # Calculate actual grid dimensions (will be square)
-        grid_width = 15 * grid_spacing
-        grid_height = 15 * grid_spacing
+        # Store placement bounds for snapping/clamping (used by components)
+        self.graphicsViewSandbox.grid_rect = (placement_left, placement_top, placement_width, placement_height)
+        # Store visual bounds (for potential future use like centering, limiting panning)
+        self.graphicsViewSandbox.visual_grid_rect = (visual_left, visual_top, visual_width, visual_height)
 
-        # Set scene rectangle
-        self.scene.setSceneRect(-scene_width/2, -scene_height/2, scene_width, scene_height)
+        # Shrink scene rect to visual grid (minimal blank area)
+        self.scene.setSceneRect(visual_left, visual_top, visual_width, visual_height)
 
-        # Create vertical lines (15 divisions with square cells)
-        for i in range(16):  # 16 lines to create 15 divisions
-            x = -grid_width/2 + i * grid_spacing
-            self.scene.addLine(x, -grid_height/2, x, grid_height/2, QPen(QColor(220, 220, 220)))
+        light_pen = QPen(QColor(220, 220, 220))
+        inner_border_pen = QPen(QColor(180, 180, 180))
+        outer_border_pen = QPen(QColor(80, 80, 80), 2)
 
-        # Create horizontal lines (15 divisions with square cells)
-        for i in range(16):  # 16 lines to create 15 divisions
-            y = -grid_height/2 + i * grid_spacing
-            self.scene.addLine(-grid_width/2, y, grid_width/2, y, QPen(QColor(220, 220, 220)))
+        # Helper to add line with tag
+        def add_line(x1, y1, x2, y2, pen):
+            line_item = self.scene.addLine(x1, y1, x2, y2, pen)
+            try:
+                line_item.setData(0, 'grid')
+            except Exception:
+                pass
+
+        # Draw full visual grid lines
+        for i in range(visual_cells + 1):  # lines count = cells + 1
+            x = visual_left + i * grid_spacing
+            pen = light_pen
+            # Vertical outer border
+            if i == 0 or i == visual_cells:
+                pen = outer_border_pen
+            # Placement border (inner ring) thicker/darker than inner lines
+            elif i == border_thickness_cells or i == visual_cells - border_thickness_cells:
+                pen = inner_border_pen
+            add_line(x, visual_top, x, visual_top + visual_height, pen)
+
+        for i in range(visual_cells + 1):
+            y = visual_top + i * grid_spacing
+            pen = light_pen
+            if i == 0 or i == visual_cells:
+                pen = outer_border_pen
+            elif i == border_thickness_cells or i == visual_cells - border_thickness_cells:
+                pen = inner_border_pen
+            add_line(visual_left, y, visual_left + visual_width, y, pen)
+
+        # Add shaded forbidden border rectangles
+        from PyQt6.QtGui import QBrush
+        from PyQt6.QtWidgets import QGraphicsRectItem
+        shaded_brush = QBrush(QColor(50, 50, 50, 40))
+        def add_shaded_rect(x, y, w, h):
+            rect_item = QGraphicsRectItem(x, y, w, h)
+            rect_item.setBrush(shaded_brush)
+            rect_item.setPen(QPen(Qt.PenStyle.NoPen))
+            rect_item.setZValue(-10)  # behind grid lines
+            rect_item.setData(0, 'grid-border')
+            self.scene.addItem(rect_item)
+        # Left border
+        add_shaded_rect(visual_left, visual_top, grid_spacing, visual_height)
+        # Right border
+        add_shaded_rect(placement_left + placement_width, visual_top, grid_spacing, visual_height)
+        # Top border
+        add_shaded_rect(visual_left + grid_spacing, visual_top, placement_width, grid_spacing)
+        # Bottom border
+        add_shaded_rect(visual_left + grid_spacing, placement_top + placement_height, placement_width, grid_spacing)
+
+        # Optional: subtle shaded overlay for forbidden border cells (visual only)
+        # (Skippable for now; can add semi-transparent rects if desired.)
+
+        # Center view on grid after redraw (preserve if user already working? keep simple now)
+        self.graphicsViewSandbox.centerOn(0, 0)
+        # Enforce new min zoom immediately
+        if hasattr(self.graphicsViewSandbox, 'update_min_zoom'):
+            self.graphicsViewSandbox.update_min_zoom()
 
     def setupInspectSection(self):
         """Setup the Inspect section"""
@@ -147,9 +238,16 @@ class MainWindow(QMainWindow):
         self.inspect_panel.copy_output_requested.connect(self.on_copy_output_clicked)
 
     def setupLogSection(self):
-        """Setup the Log section"""
+        """Setup the Log section (placed in vertical splitter for resizable height)"""
         self.log_panel = LogPanel()
-        self.verticalLayout_central.addWidget(self.log_panel)
+        # Instead of adding directly to the vertical layout, add as second pane of vertical splitter
+        if hasattr(self, 'mainVerticalSplitter'):
+            self.mainVerticalSplitter.addWidget(self.log_panel)
+            # Optional: minimum height so it can collapse but not disappear entirely
+            self.log_panel.setMinimumHeight(60)
+        else:
+            # Fallback (should not happen) – keep old behavior
+            self.verticalLayout_central.addWidget(self.log_panel)
 
     def setupToolbarAndConnections(self):
         """Setup toolbar and connect all signals"""
@@ -315,6 +413,10 @@ class MainWindow(QMainWindow):
                 pos = comp_data["position"]
                 component.setPos(pos["x"], pos["y"])
 
+                # Apply rotation via method to ensure connection points correct
+                if component.orientation:
+                    component.rotate_component(0)  # triggers recreation with same orientation
+
                 # Add to scene
                 self.scene.addItem(component)
 
@@ -346,6 +448,9 @@ class MainWindow(QMainWindow):
 
             except Exception as e:
                 self.log_panel.log_message(f"[ERROR] Fout bij laden draad: {e}")
+
+        # After loading, ensure all connection points use latest layout
+        self.refresh_all_component_connection_points()
 
     def on_open(self):
         """Open an existing project file"""
@@ -546,29 +651,50 @@ class MainWindow(QMainWindow):
 
     # Connection and selection handlers
     def on_connection_point_clicked(self, connection_point):
-        """Handle click on a connection point"""
+        """Handle click on a connection point with validation (no out->out)."""
         self.log_panel.log_message(f"[INFO] Aansluitpunt {connection_point.point_id} aangeklikt")
         connection_point.highlight(True)
 
+        # Deselect previously highlighted last point if different
         if hasattr(self, 'last_selected_point') and self.last_selected_point != connection_point:
             self.last_selected_point.highlight(False)
-
         self.last_selected_point = connection_point
 
-        if hasattr(self, 'first_selected_point'):
-            if self.first_selected_point != connection_point:
-                wire = Wire(self.first_selected_point, connection_point)
-                self.scene.addItem(wire)
-
-                self.first_selected_point.highlight(False)
-                connection_point.highlight(False)
-
-                del self.first_selected_point
-                del self.last_selected_point
-
-                self.log_panel.log_message("[INFO] Draad verbonden")
-        else:
+        # If this is the first point, store and wait for second
+        if not hasattr(self, 'first_selected_point'):
             self.first_selected_point = connection_point
+            return
+
+        # If same point clicked twice, reset
+        if self.first_selected_point == connection_point:
+            connection_point.highlight(False)
+            del self.first_selected_point
+            del self.last_selected_point
+            return
+
+        # Validate connection
+        a = self.first_selected_point
+        b = connection_point
+        if not self.is_connection_allowed(a, b):
+            # Invalid connection: show warning, reset highlights
+            a.highlight(False)
+            b.highlight(False)
+            if hasattr(self, 'log_panel'):
+                self.log_panel.log_message("[WARN] Ongeldige verbinding: out -> out is niet toegestaan")
+            del self.first_selected_point
+            del self.last_selected_point
+            return
+
+        # Create wire if valid
+        wire = Wire(a, b)
+        self.scene.addItem(wire)
+        a.highlight(False)
+        b.highlight(False)
+        if hasattr(self, 'log_panel'):
+            self.log_panel.log_message("[INFO] Draad verbonden")
+
+        del self.first_selected_point
+        del self.last_selected_point
 
     def on_junction_point_clicked(self, junction_point):
         """Handle click on a junction point"""
@@ -600,29 +726,139 @@ class MainWindow(QMainWindow):
         self.log_panel.log_message("[INFO] Draad geselecteerd")
         self.inspect_panel.update_wire_data(wire)
 
+    def check_position_conflict(self, component):
+        """Return True if another component already occupies any grid cell of this component's footprint."""
+        if not hasattr(component, 'get_occupied_grid_cells'):
+            return False
+        footprint = component.get_occupied_grid_cells()
+        for item in self.scene.items():
+            if item is component:
+                continue
+            if hasattr(item, 'get_occupied_grid_cells'):
+                other_cells = item.get_occupied_grid_cells()
+                if footprint & other_cells:
+                    return True
+        return False
+
+    def find_free_grid_position(self, start_gpos, new_component):
+        """Find nearest anchor grid (gx, gy) so that the entire footprint (occupied cells)
+        does not overlap with existing components. Uses spiral search outwards from start.
+        start_gpos: (gx, gy) anchor grid coordinate (as per get_display_grid_position()).
+        Returns (gx, gy) or None if no free position found within bounds.
+        """
+        if not hasattr(new_component, 'get_occupied_grid_cells') or not hasattr(new_component, 'compute_effective_cell_dimensions'):
+            return None
+        if not hasattr(self.graphicsViewSandbox, 'grid_rect') or not self.graphicsViewSandbox.grid_rect:
+            return None
+        g_left, g_top, g_w, g_h = self.graphicsViewSandbox.grid_rect
+        g = self.graphicsViewSandbox.grid_spacing
+        # Convert scene coords to grid index range (using round consistent with snapping centers)
+        min_gx = int(round(g_left / g))
+        max_gx = int(round((g_left + g_w) / g))
+        min_gy = int(round(g_top / g))
+        max_gy = int(round((g_top + g_h) / g))
+
+        # Build occupied cell set of existing components
+        occupied = set()
+        for item in self.scene.items():
+            if item is new_component:
+                continue
+            if hasattr(item, 'get_occupied_grid_cells'):
+                occupied |= item.get_occupied_grid_cells()
+
+        start_x, start_y = start_gpos
+        eff_w, eff_h = new_component.compute_effective_cell_dimensions()
+
+        def footprint_free(ax, ay):
+            # Construct footprint at anchor (ax, ay)
+            cells = new_component.get_occupied_grid_cells(base_gx=ax, base_gy=ay)
+            # Boundaries: ensure each cell lies within grid index rectangle
+            for cx, cy in cells:
+                if cx < min_gx or cx > max_gx or cy < min_gy or cy > max_gy:
+                    return False
+            # Overlap check
+            return not (cells & occupied)
+
+        # Test start first
+        if footprint_free(start_x, start_y):
+            return start_x, start_y
+
+        # Spiral search
+        for radius in range(1, 40):
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    if abs(dx) != radius and abs(dy) != radius:
+                        continue  # perimeter only
+                    ax = start_x + dx
+                    ay = start_y + dy
+                    if footprint_free(ax, ay):
+                        return ax, ay
+        return None
+
     def on_component_selected(self, component):
         """Handle component selection"""
         self.selected_component = component
         self.inspect_panel.update_component_data(component)
         self.log_panel.log_message(f"[INFO] {component.component_type} geselecteerd")
 
+        conflict = self.check_position_conflict(component)
+        if conflict and hasattr(self, 'log_panel'):
+            self.log_panel.log_message(f"[WARN] Positie {component.get_display_grid_position()} al bezet")
+
     def delete_selected_components(self):
         """Delete selected components from the scene"""
+        from components.connection_points import ConnectionPoint
         selected_items = self.scene.selectedItems()
         if selected_items:
             for item in selected_items:
+                # Skip direct deletion of raw connection points (they are owned by components)
+                if isinstance(item, ConnectionPoint):
+                    continue
                 # Remove wires connected to components
                 if hasattr(item, 'connection_points'):
                     for cp in item.connection_points:
                         if hasattr(cp, 'connected_wires'):
                             for wire in cp.connected_wires.copy():
                                 self.scene.removeItem(wire)
-
                 self.scene.removeItem(item)
-
             self.selected_component = None
             self.inspect_panel.show_default_state()
-            self.log_panel.log_message(f"[INFO] {len(selected_items)} item(s) verwijderd")
+            self.log_panel.log_message(f"[INFO] {len(selected_items)} item(s) verwijderd (exclusief beschermde aansluitpunten)")
+
+    def refresh_all_component_connection_points(self):
+        """Rebuild connection points for all components to adopt latest positioning logic."""
+        for item in self.scene.items():
+            if isinstance(item, ComponentItem):
+                # Preserve existing wires mapping by storing wires per point_id
+                saved_wires = {}
+                for cp in getattr(item, 'connection_points', []):
+                    if hasattr(cp, 'connected_wires'):
+                        saved_wires[cp.point_id] = cp.connected_wires[:]
+                item.remove_connection_points()
+                item.create_connection_points()
+                # Attempt to reattach wires to matching point_ids
+                for cp in item.connection_points:
+                    if cp.point_id in saved_wires:
+                        for wire in saved_wires[cp.point_id]:
+                            # Update wire endpoints if they referenced old point
+                            if hasattr(wire, 'start_point') and wire.start_point.point_id == cp.point_id:
+                                wire.start_point = cp
+                            if hasattr(wire, 'end_point') and wire.end_point.point_id == cp.point_id:
+                                wire.end_point = cp
+                            cp.connected_wires.append(wire)
+                            wire.update_position()
+        if hasattr(self, 'log_panel'):
+            self.log_panel.log_message("[INFO] Aansluitpunten vernieuwd voor alle componenten")
+
+    def is_connection_allowed(self, point_a, point_b):
+        """Return True if a wire may connect the two points.
+        Current rule: disallow out->out. Future rules can be added here."""
+        pid_a = getattr(point_a, 'point_id', '')
+        pid_b = getattr(point_b, 'point_id', '')
+        # Block out-out in either order
+        if pid_a == 'out' and pid_b == 'out':
+            return False
+        return True
 
 
 if __name__ == '__main__':

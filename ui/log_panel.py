@@ -16,8 +16,7 @@ class LogPanel(QGroupBox):
         self.textLog = QPlainTextEdit()
         self.textLog.setReadOnly(True)
         self.textLog.setPlainText(
-            "[INFO] Simulatie gereed — 3 knooppunten, 2 componenten\n"
-            "[INFO] Simulatie gestopt"
+            "[Welcome] Application started successfully."
         )
         self.verticalLayout_log.addWidget(self.textLog)
 

@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QFormLayout, QLabel, QLineEdit, QComboBox,
     QPlainTextEdit, QPushButton
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QPointF
 
 
 class InspectPanel(QGroupBox):
@@ -19,7 +19,12 @@ class InspectPanel(QGroupBox):
 
     def setupUi(self):
         """Setup the inspect panel UI"""
+        self.setObjectName("InspectPanel")
         self.formLayout_inspect = QFormLayout(self)
+        # Apply initial tighter spacing (will also refine later)
+        self.formLayout_inspect.setContentsMargins(6, 6, 6, 6)
+        self.formLayout_inspect.setHorizontalSpacing(4)
+        self.formLayout_inspect.setVerticalSpacing(2)
 
         # Store all inspect widgets for dynamic show/hide
         self.inspect_widgets = {}
@@ -31,8 +36,28 @@ class InspectPanel(QGroupBox):
         self.createWireFields()
         self.createSimulationOutput()
 
+        # Apply compact styling once all widgets exist
+        self.apply_compact_layout()
+
         # Initially show default state
         self.show_default_state()
+
+    def apply_compact_layout(self):
+        """Apply a compact look & feel to reduce excessive blank space."""
+        # Tighten margins & spacing further if needed
+        self.formLayout_inspect.setContentsMargins(6, 4, 6, 4)
+        self.formLayout_inspect.setHorizontalSpacing(4)
+        self.formLayout_inspect.setVerticalSpacing(2)
+
+        # Global stylesheet tweaks
+        self.setStyleSheet(
+            """
+            #InspectPanel QLabel { margin: 0px; }\n
+            #InspectPanel QLineEdit, #InspectPanel QComboBox {\n                padding: 2px 4px;\n                min-height: 18px;\n            }\n            #InspectPanel QPlainTextEdit {\n                margin-top: 2px;\n            }\n            """
+        )
+        # Shrink simulation output box slightly
+        if hasattr(self, 'textOutput'):
+            self.textOutput.setMaximumHeight(120)
 
     def createDefaultElements(self):
         """Create default info label"""
@@ -107,18 +132,23 @@ class InspectPanel(QGroupBox):
         self.labelBendPointsValue = QLabel("--")
         self.formLayout_inspect.addRow(self.labelBendPoints, self.labelBendPointsValue)
 
+        # NEW: endpoints (grid coordinates)
+        self.labelWireEndpoints = QLabel("Endpoints")
+        self.labelWireEndpointsValue = QLabel("--")
+        self.formLayout_inspect.addRow(self.labelWireEndpoints, self.labelWireEndpointsValue)
+
     def createSimulationOutput(self):
         """Create simulation output section"""
         self.labelOutput = QLabel("Simulation Output")
-        self.labelOutput.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        # Remove large top margin, keep bold emphasis
+        self.labelOutput.setStyleSheet("font-weight: bold;")
         self.textOutput = QPlainTextEdit()
         self.textOutput.setReadOnly(True)
         self.textOutput.setPlaceholderText("Simulation results will appear here...")
         self.textOutput.setMaximumHeight(150)
         self.formLayout_inspect.addRow(self.labelOutput)
         self.formLayout_inspect.addRow(self.textOutput)
-
-        # Copy button for simulation output
+        # Copy button row
         self.btnCopyOutput = QPushButton("Copy Output")
         self.btnCopyOutput.setToolTip("Copy simulation output to clipboard")
         self.btnCopyOutput.clicked.connect(self.copy_output_requested.emit)
@@ -222,6 +252,7 @@ class InspectPanel(QGroupBox):
                 ('labelType', 'labelTypeValue'),
                 ('labelWireLength', 'labelWireLengthValue'),
                 ('labelBendPoints', 'labelBendPointsValue'),
+                ('labelWireEndpoints', 'labelWireEndpointsValue'),
                 ('labelNetId', 'editNetId')
             ]
 
@@ -242,33 +273,47 @@ class InspectPanel(QGroupBox):
             self.show_component_fields(component.component_type)
             self.labelTypeValue.setText(component.component_type)
 
-            # Update position
-            pos = component.pos()
-            self.labelPositionValue.setText(f"({pos.x():.0f}, {pos.y():.0f})")
+            # Update position (use grid indices if available for stable display)
+            if hasattr(component, 'get_display_grid_position'):
+                gx, gy = component.get_display_grid_position()
+                self.labelPositionValue.setText(f"({gx}, {gy})")
+            else:
+                pos = component.pos()
+                self.labelPositionValue.setText(f"({pos.x():.0f}, {pos.y():.0f})")
 
             # Update component-specific values
             if hasattr(component, 'name'):
+                # Block signals to avoid recursive field_changed emission
+                old_block = self.editName.blockSignals(True)
                 self.editName.setText(component.name or "")
+                self.editName.blockSignals(old_block)
 
             # Update orientation dropdown if it's visible
             if hasattr(component, 'orientation') and hasattr(self, 'comboOrient') and self.comboOrient.isVisible():
                 orientation_text = f"{component.orientation}°"
-                # Find and set the correct index in the dropdown
                 index = self.comboOrient.findText(orientation_text)
                 if index >= 0:
+                    old_block = self.comboOrient.blockSignals(True)
                     self.comboOrient.setCurrentIndex(index)
+                    self.comboOrient.blockSignals(old_block)
 
             if hasattr(component, 'value'):
                 value = component.value or ""
                 if component.component_type == "Weerstand":
+                    old_block = self.editResistance.blockSignals(True)
                     self.editResistance.setText(value)
+                    self.editResistance.blockSignals(old_block)
                 elif component.component_type in ["Spannings Bron", "Vdc"]:
+                    old_block = self.editVoltage.blockSignals(True)
                     self.editVoltage.setText(value)
+                    self.editVoltage.blockSignals(old_block)
                 elif component.component_type == "Isrc":
+                    old_block = self.editCurrent.blockSignals(True)
                     self.editCurrent.setText(value)
+                    self.editCurrent.blockSignals(old_block)
 
     def update_wire_data(self, wire):
-        """Update the panel with wire data"""
+        """Update the panel with wire data, including endpoint grid coordinates"""
         self.show_wire_fields()
         self.labelTypeValue.setText("Wire")
 
@@ -277,6 +322,43 @@ class InspectPanel(QGroupBox):
             line = wire.line()
             length = ((line.x2() - line.x1())**2 + (line.y2() - line.y1())**2)**0.5
             self.labelWireLengthValue.setText(f"{length:.1f}px")
+
+        # Bend points count
+        bend_count = len(getattr(wire, 'bend_points', [])) if hasattr(wire, 'bend_points') else 0
+        self.labelBendPointsValue.setText(str(bend_count))
+
+        # Endpoint grid positions
+        try:
+            if wire.scene() and wire.scene().views():
+                view = wire.scene().views()[0]
+                g = getattr(view, 'grid_spacing', None)
+            else:
+                g = None
+            start_pt = getattr(wire, 'start_point', None)
+            end_pt = getattr(wire, 'end_point', None)
+            def fmt_point(pt):
+                if not pt:
+                    return "--"
+                # Scene position
+                if hasattr(pt, 'get_scene_pos'):
+                    pos = pt.get_scene_pos()
+                else:
+                    pos = pt.scenePos() if hasattr(pt, 'scenePos') else QPointF(0, 0)
+                if g:
+                    gx = int(round(pos.x() / g))
+                    gy = int(round(pos.y() / g))
+                    coord = f"({gx},{gy})"
+                else:
+                    coord = f"({pos.x():.0f},{pos.y():.0f})"
+                pid = getattr(pt, 'point_id', '')
+                if pid:
+                    coord += f":{pid}"
+                return coord
+            start_txt = fmt_point(start_pt)
+            end_txt = fmt_point(end_pt)
+            self.labelWireEndpointsValue.setText(f"{start_txt} -> {end_txt}")
+        except Exception as e:
+            self.labelWireEndpointsValue.setText("--")
 
     def clear_output(self):
         """Clear the simulation output"""
