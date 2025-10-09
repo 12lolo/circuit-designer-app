@@ -4,7 +4,7 @@ Handles various types of connection points for components and wires.
 """
 
 from PyQt6.QtWidgets import QGraphicsEllipseItem
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QPointF
 from PyQt6.QtGui import QPen, QColor, QBrush
 
 
@@ -101,6 +101,8 @@ class JunctionPoint(QGraphicsEllipseItem):
         self.radius = 6
         super().__init__(-self.radius, -self.radius, self.radius * 2, self.radius * 2)
         self.connected_wires = []
+        self.dragging = False
+        self._press_scene_pos = None
 
         # Set position
         self.setPos(position)
@@ -115,14 +117,77 @@ class JunctionPoint(QGraphicsEllipseItem):
         # Make it draggable and connectable
         self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsSelectable)
+        self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemSendsGeometryChanges)
         self.setAcceptHoverEvents(True)
 
     def mousePressEvent(self, event):
-        """Handle junction point clicks for wire connections"""
+        """Start possible drag; defer click/connect decision to release."""
         if event.button() == Qt.MouseButton.LeftButton:
-            main_window = self.scene().views()[0].main_window
-            main_window.on_junction_point_clicked(self)
+            self.dragging = True
+            self._press_scene_pos = event.scenePos()
+            # Bring to front while dragging
+            self.setZValue(200)
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """During drag, let the item move and update connected wires in realtime."""
+        if self.dragging:
+            super().mouseMoveEvent(event)
+            self._update_connected_wires_async()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """End drag; if no movement, treat as a click to participate in wiring."""
+        was_dragging = self.dragging
+        self.dragging = False
+        # Return to normal z-value
+        self.setZValue(30)
+
+        super().mouseReleaseEvent(event)
+
+        if event.button() == Qt.MouseButton.LeftButton:
+            moved = False
+            if self._press_scene_pos is not None:
+                delta = event.scenePos() - self._press_scene_pos
+                moved = (abs(delta.x()) > 2 or abs(delta.y()) > 2)
+            # If moved, snap and update wires. If not moved, act like a click.
+            if moved:
+                self.snap_to_grid()
+                self._update_connected_wires_async()
+            else:
+                main_window = self.scene().views()[0].main_window
+                main_window.on_junction_point_clicked(self)
+        self._press_scene_pos = None
+
+    def itemChange(self, change, value):
+        """Keep wires in sync while item moves."""
+        if change == QGraphicsEllipseItem.GraphicsItemChange.ItemPositionChange and self.dragging:
+            # As the position changes, schedule wire updates
+            self._update_connected_wires_async()
+        return super().itemChange(change, value)
+
+    def _update_connected_wires_async(self):
+        # Schedule wire updates to run after the current event completes
+        if not self.connected_wires:
+            return
+        def do_update():
+            for w in list(self.connected_wires):
+                try:
+                    w.update_position()
+                except Exception:
+                    pass
+        QTimer.singleShot(0, do_update)
+
+    def snap_to_grid(self):
+        """Snap junction to nearest grid intersection"""
+        scene = self.scene()
+        if scene and scene.views():
+            view = scene.views()[0]
+            if hasattr(view, 'grid_spacing'):
+                g = view.grid_spacing
+                p = self.pos()
+                self.setPos(round(p.x() / g) * g, round(p.y() / g) * g)
 
     def hoverEnterEvent(self, event):
         self.setBrush(QBrush(QColor(100, 100, 100)))  # Gray on hover

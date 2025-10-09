@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QGraphicsScene, QMessageBox, QFileDialog
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QPointF, QSettings
 from PyQt6.QtGui import QPen, QColor
 
 from components import (
@@ -20,6 +20,7 @@ from ui.toolbar_manager import ToolbarManager
 from ui.simulation_engine import SimulationEngine
 from ui.canvas_tools import CanvasTools
 from ui.log_panel import LogPanel
+from ui.sim_output_panel import SimulationOutputPanel
 
 
 class MainWindow(QMainWindow):
@@ -29,6 +30,7 @@ class MainWindow(QMainWindow):
         # Initialize component managers
         self.components_panel = None
         self.inspect_panel = None
+        self.sim_output_panel = None
         self.toolbar_manager = None
         self.simulation_engine = None
         self.canvas_tools = None
@@ -91,7 +93,7 @@ class MainWindow(QMainWindow):
         """Setup the Sandbox (Zandbak) section"""
         from PyQt6.QtWidgets import QGroupBox
 
-        self.groupSandbox = QGroupBox("Zandbak")
+        self.groupSandbox = QGroupBox("Canvas")
         self.splitterMain.addWidget(self.groupSandbox)
 
         self.horizontalLayout_sandbox = QHBoxLayout(self.groupSandbox)
@@ -229,13 +231,43 @@ class MainWindow(QMainWindow):
             self.graphicsViewSandbox.update_min_zoom()
 
     def setupInspectSection(self):
-        """Setup the Inspect section"""
-        self.inspect_panel = InspectPanel()
-        self.splitterMain.addWidget(self.inspect_panel)
+        """Setup the Inspect section with Simulation Output beneath it"""
+        # Use a vertical splitter so the user can resize Inspect vs. Output
+        self.right_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # Connect inspect panel signals
+        # Inspect panel (top)
+        self.inspect_panel = InspectPanel()
+        self.right_splitter.addWidget(self.inspect_panel)
+
+        # Simulation output panel (bottom)
+        self.sim_output_panel = SimulationOutputPanel()
+        self.right_splitter.addWidget(self.sim_output_panel)
+
+        # Add to main horizontal splitter as the right pane
+        self.splitterMain.addWidget(self.right_splitter)
+
+        # Set initial proportions (more space to Inspect by default)
+        self.right_splitter.setStretchFactor(0, 3)
+        self.right_splitter.setStretchFactor(1, 1)
+        try:
+            # Try to restore last sizes; if none, apply a default split
+            settings = QSettings("ECis", "CircuitDesigner")
+            sizes_json = settings.value("right_splitter_sizes", "")
+            if sizes_json:
+                import json as _json
+                sizes = _json.loads(sizes_json)
+                if isinstance(sizes, list) and all(isinstance(x, int) for x in sizes):
+                    self.right_splitter.setSizes(sizes)
+                else:
+                    self.right_splitter.setSizes([500, 160])
+            else:
+                self.right_splitter.setSizes([500, 160])
+        except Exception:
+            pass
+
+        # Connect inspect and output panel signals
         self.inspect_panel.field_changed.connect(self.on_inspect_field_changed)
-        self.inspect_panel.copy_output_requested.connect(self.on_copy_output_clicked)
+        self.sim_output_panel.copy_output_requested.connect(self.on_copy_output_clicked)
 
     def setupLogSection(self):
         """Setup the Log section (placed in vertical splitter for resizable height)"""
@@ -308,8 +340,8 @@ class MainWindow(QMainWindow):
         if self.scene.items():
             reply = QMessageBox.question(
                 self,
-                'Nieuw Project',
-                'Weet je zeker dat je een nieuw project wilt starten? Alle niet-opgeslagen wijzigingen gaan verloren.',
+                'New Project',
+                'Start a new project? All unsaved changes will be lost.',
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No
             )
@@ -324,10 +356,11 @@ class MainWindow(QMainWindow):
 
         # Clear inspect panel and reset selection
         self.selected_component = None
-        self.inspect_panel.clear_output()
+        if self.sim_output_panel:
+            self.sim_output_panel.clear_output()
         self.inspect_panel.show_default_state()
 
-        self.log_panel.log_message("[INFO] Nieuw project gestart")
+        self.log_panel.log_message("[INFO] New project started")
 
     def serialize_project_data(self):
         """Serialize the current project data to a dictionary"""
@@ -425,7 +458,7 @@ class MainWindow(QMainWindow):
                 component_map[component_id] = component
 
             except Exception as e:
-                self.log_panel.log_message(f"[ERROR] Fout bij laden component: {e}")
+                self.log_panel.log_message(f"[ERROR] Error loading component: {e}")
 
         # Load wires (simplified approach - just create wires between points)
         for wire_data in project_data.get("wires", []):
@@ -436,8 +469,8 @@ class MainWindow(QMainWindow):
                 end_pos = wire_data["end"]
 
                 # Create junction points
-                start_junction = JunctionPoint(start_pos["x"], start_pos["y"])
-                end_junction = JunctionPoint(end_pos["x"], end_pos["y"])
+                start_junction = JunctionPoint(QPointF(start_pos["x"], start_pos["y"]))
+                end_junction = JunctionPoint(QPointF(end_pos["x"], end_pos["y"]))
 
                 self.scene.addItem(start_junction)
                 self.scene.addItem(end_junction)
@@ -447,7 +480,7 @@ class MainWindow(QMainWindow):
                 self.scene.addItem(wire)
 
             except Exception as e:
-                self.log_panel.log_message(f"[ERROR] Fout bij laden draad: {e}")
+                self.log_panel.log_message(f"[ERROR] Error loading wire: {e}")
 
         # After loading, ensure all connection points use latest layout
         self.refresh_all_component_connection_points()
@@ -458,8 +491,8 @@ class MainWindow(QMainWindow):
         if self.scene.items():
             reply = QMessageBox.question(
                 self,
-                'Project Openen',
-                'Weet je zeker dat je een project wilt openen? Alle niet-opgeslagen wijzigingen gaan verloren.',
+                'Open Project',
+                'Open a project? All unsaved changes will be lost.',
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No
             )
@@ -469,7 +502,7 @@ class MainWindow(QMainWindow):
         # Show file dialog to select a project file
         file_name, _ = QFileDialog.getOpenFileName(
             self,
-            "Project Openen",
+            "Open Project",
             "",
             "ECis Project Files (*.ecis);;JSON Files (*.json);;All Files (*)"
         )
@@ -486,25 +519,25 @@ class MainWindow(QMainWindow):
                 self.selected_component = None
                 self.inspect_panel.show_default_state()
 
-                self.log_panel.log_message(f"[INFO] Project geladen: {os.path.basename(file_name)}")
+                self.log_panel.log_message(f"[INFO] Project loaded: {os.path.basename(file_name)}")
 
             except FileNotFoundError:
-                QMessageBox.critical(self, "Fout", f"Bestand niet gevonden: {file_name}")
-                self.log_panel.log_message(f"[ERROR] Bestand niet gevonden: {file_name}")
+                QMessageBox.critical(self, "Error", f"File not found: {file_name}")
+                self.log_panel.log_message(f"[ERROR] File not found: {file_name}")
             except json.JSONDecodeError as e:
-                QMessageBox.critical(self, "Fout", f"Ongeldig JSON bestand: {e}")
-                self.log_panel.log_message(f"[ERROR] Ongeldige projectbestand: {e}")
+                QMessageBox.critical(self, "Error", f"Invalid JSON file: {e}")
+                self.log_panel.log_message(f"[ERROR] Invalid project file: {e}")
             except Exception as e:
-                QMessageBox.critical(self, "Fout", f"Fout bij openen project: {e}")
-                self.log_panel.log_message(f"[ERROR] Fout bij openen project: {e}")
+                QMessageBox.critical(self, "Error", f"Error opening project: {e}")
+                self.log_panel.log_message(f"[ERROR] Error opening project: {e}")
 
     def on_save(self):
         """Save the current project to a file"""
         # Show file dialog to select a location to save the project
         file_name, _ = QFileDialog.getSaveFileName(
             self,
-            "Project Opslaan",
-            "ECis-projectsave",  # Default filename
+            "Save Project",
+            "ECis-project",
             "ECis Project Files (*.ecis);;JSON Files (*.json);;All Files (*)"
         )
 
@@ -521,20 +554,20 @@ class MainWindow(QMainWindow):
                 with open(file_name, 'w', encoding='utf-8') as json_file:
                     json.dump(project_data, json_file, indent=2, ensure_ascii=False)
 
-                self.log_panel.log_message(f"[INFO] Project opgeslagen als: {os.path.basename(file_name)}")
+                self.log_panel.log_message(f"[INFO] Project saved as: {os.path.basename(file_name)}")
 
                 # Show success message
-                QMessageBox.information(self, "Opgeslagen", f"Project succesvol opgeslagen als:\n{os.path.basename(file_name)}")
+                QMessageBox.information(self, "Saved", f"Project successfully saved as:\n{os.path.basename(file_name)}")
 
             except PermissionError:
-                QMessageBox.critical(self, "Fout", f"Geen toestemming om te schrijven naar: {file_name}")
-                self.log_panel.log_message(f"[ERROR] Geen schrijfrechten: {file_name}")
+                QMessageBox.critical(self, "Error", f"No permission to write to: {file_name}")
+                self.log_panel.log_message(f"[ERROR] No write permissions: {file_name}")
             except Exception as e:
-                QMessageBox.critical(self, "Fout", f"Fout bij opslaan project: {e}")
-                self.log_panel.log_message(f"[ERROR] Fout bij opslaan project: {e}")
+                QMessageBox.critical(self, "Error", f"Error saving project: {e}")
+                self.log_panel.log_message(f"[ERROR] Error saving project: {e}")
 
     def on_run(self):
-        self.log_panel.log_message("[INFO] Simulatie gestart")
+        self.log_panel.log_message("[INFO] Simulation started")
 
         # Get all components from the scene
         components = []
@@ -548,12 +581,13 @@ class MainWindow(QMainWindow):
 
         # Simulate the circuit using the simulation engine
         simulation_result = self.simulation_engine.simulate_circuit(components, wires)
-        self.inspect_panel.set_output(simulation_result)
+        if self.sim_output_panel:
+            self.sim_output_panel.set_output(simulation_result)
 
-        self.log_panel.log_message("[INFO] Simulatie voltooid")
+        self.log_panel.log_message("[INFO] Simulation finished")
 
     def on_stop(self):
-        self.log_panel.log_message("[INFO] Simulatie gestopt")
+        self.log_panel.log_message("[INFO] Simulation stopped")
 
     def on_zoom_in(self):
         self.graphicsViewSandbox.scale(1.2, 1.2)
@@ -564,20 +598,25 @@ class MainWindow(QMainWindow):
     def on_zoom_reset(self):
         """Reset zoom to 1:1"""
         self.graphicsViewSandbox.resetTransform()
+        # Enforce min zoom and clamp to grid after reset
+        if hasattr(self.graphicsViewSandbox, 'update_min_zoom'):
+            self.graphicsViewSandbox.update_min_zoom()
+        if hasattr(self.graphicsViewSandbox, 'clamp_view_to_visual_grid'):
+            self.graphicsViewSandbox.clamp_view_to_visual_grid()
 
     def on_center_view(self):
         """Center the view on the scene"""
         self.graphicsViewSandbox.centerOn(0, 0)
-        self.log_panel.log_message("[INFO] View gecentreerd")
+        self.log_panel.log_message("[INFO] View centered")
 
     def on_probe(self):
-        self.log_panel.log_message("[INFO] Meetprobe geactiveerd")
+        self.log_panel.log_message("[INFO] Probe activated")
 
     def on_copy_output_clicked(self):
         """Copy simulation output to clipboard"""
         from PyQt6.QtWidgets import QApplication
 
-        output_text = self.inspect_panel.textOutput.toPlainText()
+        output_text = self.sim_output_panel.get_output_text() if self.sim_output_panel else ""
         if output_text.strip():
             clipboard = QApplication.clipboard()
             clipboard.setText(output_text)
@@ -590,19 +629,19 @@ class MainWindow(QMainWindow):
         for item in self.scene.items():
             if hasattr(item, 'setSelected'):
                 item.setSelected(True)
-        self.log_panel.log_message("[INFO] Alle items geselecteerd")
+        self.log_panel.log_message("[INFO] All items selected")
 
     def on_deselect_all(self):
         """Deselect all items"""
         self.scene.clearSelection()
         self.selected_component = None
         self.inspect_panel.show_default_state()
-        self.log_panel.log_message("[INFO] Selectie gewist")
+        self.log_panel.log_message("[INFO] Selection cleared")
 
     def on_focus_canvas(self):
         """Set focus to the canvas"""
         self.graphicsViewSandbox.setFocus()
-        self.log_panel.log_message("[INFO] Canvas gefocust")
+        self.log_panel.log_message("[INFO] Canvas focused")
 
     def on_clear_log(self):
         """Clear the log"""
@@ -636,20 +675,20 @@ class MainWindow(QMainWindow):
 
             # Update component-specific values
             comp_type = self.selected_component.component_type
-            if comp_type == "Weerstand" and hasattr(self.inspect_panel, 'editResistance'):
+            if comp_type == "Resistor" and hasattr(self.inspect_panel, 'editResistance'):
                 if self.inspect_panel.editResistance.isVisible():
                     self.selected_component.value = self.inspect_panel.editResistance.text()
-            elif comp_type in ["Spannings Bron", "Vdc"] and hasattr(self.inspect_panel, 'editVoltage'):
+            elif comp_type in ["Voltage Source", "Vdc"] and hasattr(self.inspect_panel, 'editVoltage'):
                 if self.inspect_panel.editVoltage.isVisible():
                     self.selected_component.value = self.inspect_panel.editVoltage.text()
-            elif comp_type == "Isrc" and hasattr(self.inspect_panel, 'editCurrent'):
+            elif comp_type == "Current Source" and hasattr(self.inspect_panel, 'editCurrent'):
                 if self.inspect_panel.editCurrent.isVisible():
                     self.selected_component.value = self.inspect_panel.editCurrent.text()
 
     # Connection and selection handlers
     def on_connection_point_clicked(self, connection_point):
         """Handle click on a connection point with validation (no out->out)."""
-        self.log_panel.log_message(f"[INFO] Aansluitpunt {connection_point.point_id} aangeklikt")
+        self.log_panel.log_message(f"[INFO] Connection point {connection_point.point_id} clicked")
         connection_point.highlight(True)
 
         # Deselect previously highlighted last point if different
@@ -677,7 +716,7 @@ class MainWindow(QMainWindow):
             a.highlight(False)
             b.highlight(False)
             if hasattr(self, 'log_panel'):
-                self.log_panel.log_message("[WARN] Ongeldige verbinding: out -> out is niet toegestaan")
+                self.log_panel.log_message("[WARN] Invalid connection: out -> out is not allowed")
             del self.first_selected_point
             del self.last_selected_point
             return
@@ -688,14 +727,14 @@ class MainWindow(QMainWindow):
         a.highlight(False)
         b.highlight(False)
         if hasattr(self, 'log_panel'):
-            self.log_panel.log_message("[INFO] Draad verbonden")
+            self.log_panel.log_message("[INFO] Wire connected")
 
         del self.first_selected_point
         del self.last_selected_point
 
     def on_junction_point_clicked(self, junction_point):
         """Handle click on a junction point"""
-        self.log_panel.log_message(f"[INFO] Junctiepunt aangeklikt")
+        self.log_panel.log_message(f"[INFO] Junction point clicked")
         junction_point.highlight(True)
 
         if hasattr(self, 'last_selected_point') and self.last_selected_point != junction_point:
@@ -714,13 +753,13 @@ class MainWindow(QMainWindow):
                 del self.first_selected_point
                 del self.last_selected_point
 
-                self.log_panel.log_message("[INFO] Draad verbonden via junctiepunt")
+                self.log_panel.log_message("[INFO] Wire connected via junction point")
         else:
             self.first_selected_point = junction_point
 
     def on_wire_selected(self, wire):
         """Handle wire selection"""
-        self.log_panel.log_message("[INFO] Draad geselecteerd")
+        self.log_panel.log_message("[INFO] Wire selected")
         self.inspect_panel.update_wire_data(wire)
 
     def check_position_conflict(self, component):
@@ -800,27 +839,43 @@ class MainWindow(QMainWindow):
 
         conflict = self.check_position_conflict(component)
         if conflict and hasattr(self, 'log_panel'):
-            self.log_panel.log_message(f"[WARN] Positie {component.get_display_grid_position()} al bezet")
+            self.log_panel.log_message(f"[WARN] Position {component.get_display_grid_position()} already occupied")
 
     def delete_selected_components(self):
         """Delete selected components from the scene"""
         from components.connection_points import ConnectionPoint
         selected_items = self.scene.selectedItems()
         if selected_items:
+            removed_count = 0
             for item in selected_items:
                 # Skip direct deletion of raw connection points (they are owned by components)
                 if isinstance(item, ConnectionPoint):
                     continue
+                # If it's a junction point, remove its connected wires first using proper cleanup
+                if isinstance(item, JunctionPoint):
+                    try:
+                        for wire in list(getattr(item, 'connected_wires', [])):
+                            if hasattr(wire, 'delete_wire'):
+                                wire.delete_wire()
+                            elif wire.scene():
+                                self.scene.removeItem(wire)
+                    except Exception:
+                        pass
                 # Remove wires connected to components
                 if hasattr(item, 'connection_points'):
                     for cp in item.connection_points:
                         if hasattr(cp, 'connected_wires'):
                             for wire in cp.connected_wires.copy():
-                                self.scene.removeItem(wire)
+                                if hasattr(wire, 'delete_wire'):
+                                    wire.delete_wire()
+                                elif wire.scene():
+                                    self.scene.removeItem(wire)
+                # Finally remove the item itself (component, wire segment group, or junction)
                 self.scene.removeItem(item)
+                removed_count += 1
             self.selected_component = None
             self.inspect_panel.show_default_state()
-            self.log_panel.log_message(f"[INFO] {len(selected_items)} item(s) verwijderd (exclusief beschermde aansluitpunten)")
+            self.log_panel.log_message(f"[INFO] {removed_count} item(s) removed (excluding protected connection points)")
 
     def refresh_all_component_connection_points(self):
         """Rebuild connection points for all components to adopt latest positioning logic."""
@@ -845,7 +900,7 @@ class MainWindow(QMainWindow):
                             cp.connected_wires.append(wire)
                             wire.update_position()
         if hasattr(self, 'log_panel'):
-            self.log_panel.log_message("[INFO] Aansluitpunten vernieuwd voor alle componenten")
+            self.log_panel.log_message("[INFO] Connection points refreshed for all components")
 
     def is_connection_allowed(self, point_a, point_b):
         """Return True if a wire may connect the two points.
@@ -856,6 +911,17 @@ class MainWindow(QMainWindow):
         if pid_a == 'out' and pid_b == 'out':
             return False
         return True
+
+    def closeEvent(self, event):
+        """Persist splitter layout on close and pass event to base class."""
+        try:
+            settings = QSettings("ECis", "CircuitDesigner")
+            if hasattr(self, 'right_splitter') and self.right_splitter is not None:
+                import json as _json
+                settings.setValue("right_splitter_sizes", _json.dumps(self.right_splitter.sizes()))
+        except Exception:
+            pass
+        super().closeEvent(event)
 
 
 if __name__ == '__main__':

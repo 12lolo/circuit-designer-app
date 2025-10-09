@@ -37,25 +37,25 @@ class ToolbarManager(QObject):
         self.main_window.addToolBar(self.toolbar)
 
         # Create toolbar actions with keyboard shortcuts
-        self.actionNieuw = QAction("Nieuw", self.main_window)
+        self.actionNieuw = QAction("New", self.main_window)
         self.actionNieuw.setShortcut(QKeySequence.StandardKey.New)
-        self.actionNieuw.setToolTip("Nieuw project (Ctrl+N)")
+        self.actionNieuw.setToolTip("New project (Ctrl+N)")
 
-        self.actionOpenen = QAction("Openen", self.main_window)
+        self.actionOpenen = QAction("Open", self.main_window)
         self.actionOpenen.setShortcut(QKeySequence.StandardKey.Open)
-        self.actionOpenen.setToolTip("Project openen (Ctrl+O)")
+        self.actionOpenen.setToolTip("Open project (Ctrl+O)")
 
-        self.actionOpslaan = QAction("Opslaan", self.main_window)
+        self.actionOpslaan = QAction("Save", self.main_window)
         self.actionOpslaan.setShortcut(QKeySequence.StandardKey.Save)
-        self.actionOpslaan.setToolTip("Project opslaan (Ctrl+S)")
+        self.actionOpslaan.setToolTip("Save project (Ctrl+S)")
 
         self.actionRun = QAction("Run", self.main_window)
         self.actionRun.setShortcut(QKeySequence("F5"))
-        self.actionRun.setToolTip("Simulatie starten (F5)")
+        self.actionRun.setToolTip("Start simulation (F5)")
 
         self.actionStop = QAction("Stop", self.main_window)
         self.actionStop.setShortcut(QKeySequence("Shift+F5"))
-        self.actionStop.setToolTip("Simulatie stoppen (Shift+F5)")
+        self.actionStop.setToolTip("Stop simulation (Shift+F5)")
 
         # Add actions to toolbar
         self.toolbar.addAction(self.actionNieuw)

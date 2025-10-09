@@ -132,7 +132,7 @@ class DroppableGraphicsView(QGraphicsView):
                             # Remove component if no free spot
                             self.scene().removeItem(component)
                             if hasattr(main_window, 'log_panel'):
-                                main_window.log_panel.log_message("[WARN] Geen vrije positie beschikbaar voor component plaatsing")
+                                main_window.log_panel.log_message("[WARN] No free position available for component placement")
                             event.acceptProposedAction()
                             return
 
@@ -142,7 +142,7 @@ class DroppableGraphicsView(QGraphicsView):
                     main_window.on_component_selected(component)
 
                 if hasattr(main_window, 'log_panel'):
-                    main_window.log_panel.log_message(f"[INFO] Component geplaatst op raster {component.get_display_grid_position()}")
+                    main_window.log_panel.log_message(f"[INFO] Component placed at grid {component.get_display_grid_position()}")
 
             event.acceptProposedAction()
         else:

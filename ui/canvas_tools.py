@@ -29,12 +29,12 @@ class CanvasTools(QObject):
 
         self.btnZoomOut = QToolButton()
         self.btnZoomOut.setText("-")
-        self.btnZoomOut.setToolTip("Zoom uit")
+        self.btnZoomOut.setToolTip("Zoom out")
         self.btnZoomOut.clicked.connect(self.zoom_out_requested.emit)
 
         self.btnProbe = QToolButton()
         self.btnProbe.setText("→")
-        self.btnProbe.setToolTip("Meetprobe")
+        self.btnProbe.setToolTip("Probe")
         self.btnProbe.clicked.connect(self.probe_requested.emit)
 
         # Add buttons to layout

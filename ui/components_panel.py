@@ -8,7 +8,7 @@ class ComponentsPanel(QGroupBox):
     """Panel containing draggable component buttons"""
 
     def __init__(self):
-        super().__init__("Componenten")
+        super().__init__("Components")
         self.setupUi()
 
     def setupUi(self):
@@ -38,11 +38,11 @@ class ComponentsPanel(QGroupBox):
     def createComponentButtons(self):
         """Create all the draggable component buttons"""
         # Draggable component buttons with sizes (width x height in grid cells)
-        self.btnResistor = DraggableButton("Weerstand", "Weerstand", 2, 1)  # 2x1 grid cells
+        self.btnResistor = DraggableButton("Resistor", "Resistor", 2, 1)  # 2x1 grid cells
         self.btnVdc = DraggableButton("Vdc", "Vdc", 1, 1)  # 1x1 grid cell
         self.btnGnd = DraggableButton("GND", "GND", 1, 1)  # 1x1 grid cell
-        self.btnVSource = DraggableButton("Spannings Bron", "Spannings Bron", 1, 2)  # 1x2 grid cells
-        self.btnIsource = DraggableButton("Isrc", "Isrc", 1, 2)  # 1x2 grid cells
+        self.btnVSource = DraggableButton("Voltage Source", "Voltage Source", 1, 2)  # 1x2 grid cells
+        self.btnIsource = DraggableButton("Current Source", "Current Source", 1, 2)  # 1x2 grid cells
 
         # Add buttons to layout
         self.verticalLayout_buttons.addWidget(self.btnResistor)

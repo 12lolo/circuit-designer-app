@@ -40,11 +40,11 @@ class SimulationEngine(QObject):
                 comp_type = comp.component_type
                 component_counts[comp_type] = component_counts.get(comp_type, 0) + 1
 
-                if comp_type in ["Spannings Bron", "Vdc"]:
+                if comp_type in ["Voltage Source", "Vdc"]:
                     voltage_sources.append(comp)
-                elif comp_type == "Weerstand":
+                elif comp_type == "Resistor":
                     resistors.append(comp)
-                elif comp_type == "Isrc":
+                elif comp_type == "Current Source":
                     current_sources.append(comp)
                 elif comp_type == "GND":
                     grounds.append(comp)
@@ -161,17 +161,17 @@ class SimulationEngine(QObject):
                     else:
                         comp_name = f"ground{component_counters[comp_type_key]}"
                     comp_type = "ground"
-                elif comp.component_type in ["Spannings Bron", "Vdc"]:
+                elif comp.component_type in ["Voltage Source", "Vdc"]:
                     if component_counters[comp_type_key] == 1:
                         comp_name = "voltage_source"
                     else:
                         comp_name = f"voltage_source{component_counters[comp_type_key]}"
                     comp_type = "voltage source"
-                elif comp.component_type == "Weerstand":
+                elif comp.component_type == "Resistor":
                     comp_name = str(resistor_counter)
                     resistor_counter += 1
                     comp_type = "resistor"
-                elif comp.component_type == "Isrc":
+                elif comp.component_type == "Current Source":
                     if component_counters[comp_type_key] == 1:
                         comp_name = "current_source1"
                     else:
@@ -217,11 +217,11 @@ class SimulationEngine(QObject):
                             numeric_value = float(value_str.replace('V', '').replace('v', ''))
                         elif comp_type == 'resistor':
                             if 'k' in value_str.lower():
-                                numeric_value = float(value_str.replace('Ω', '').replace('k', '').replace('K', '')) * 1000
+                                numeric_value = float(value_str.replace('\u03a9', '').replace('k', '').replace('K', '')) * 1000
                             elif 'm' in value_str.lower():
-                                numeric_value = float(value_str.replace('Ω', '').replace('m', '').replace('M', '')) / 1000
+                                numeric_value = float(value_str.replace('\u03a9', '').replace('m', '').replace('M', '')) / 1000
                             else:
-                                numeric_value = float(value_str.replace('Ω', '').replace('Ohm', '').replace('ohm', ''))
+                                numeric_value = float(value_str.replace('\u03a9', '').replace('Ohm', '').replace('ohm', ''))
                         elif comp_type == 'current source':
                             if 'm' in value_str.lower():
                                 numeric_value = float(value_str.replace('A', '').replace('a', '').replace('m', '').replace('M', '')) / 1000

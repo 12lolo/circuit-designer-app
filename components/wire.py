@@ -41,7 +41,6 @@ class Wire(QGraphicsLineItem):
 
     def mousePressEvent(self, event):
         """Handle wire selection and bend point creation"""
-        from .connection_points import BendPoint  # Import here to avoid circular imports
 
         if event.button() == Qt.MouseButton.LeftButton:
             # Select this wire
@@ -128,7 +127,7 @@ class Wire(QGraphicsLineItem):
         # Log the action using the new log panel
         main_window = self.scene().views()[0].main_window
         if hasattr(main_window, 'log_panel'):
-            main_window.log_panel.log_message(f"[INFO] Bendpunt toegevoegd aan draad")
+            main_window.log_panel.log_message(f"[INFO] Bend point added to wire")
 
     def add_junction_point(self):
         """Add a junction point at the midpoint of the wire"""
@@ -149,7 +148,7 @@ class Wire(QGraphicsLineItem):
         # Log the action using the new log panel
         main_window = self.scene().views()[0].main_window
         if hasattr(main_window, 'log_panel'):
-            main_window.log_panel.log_message(f"[INFO] Junctiepunt toegevoegd aan draad")
+            main_window.log_panel.log_message(f"[INFO] Junction point added to wire")
 
     def delete_wire(self):
         """Delete this wire and clean up connections"""
@@ -181,7 +180,7 @@ class Wire(QGraphicsLineItem):
         # Log the action using the new log panel
         main_window = self.scene().views()[0].main_window if self.scene() and self.scene().views() else None
         if main_window and hasattr(main_window, 'log_panel'):
-            main_window.log_panel.log_message(f"[INFO] Draad verwijderd")
+            main_window.log_panel.log_message(f"[INFO] Wire removed")
 
     def update_wire_path(self):
         """Update the wire path considering bend points"""

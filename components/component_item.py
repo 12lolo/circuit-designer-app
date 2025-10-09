@@ -57,13 +57,13 @@ class ComponentItem(QGraphicsRectItem):
 
     def get_default_value(self):
         """Get default value based on component type"""
-        if self.component_type == "Weerstand":
+        if self.component_type == "Resistor":
             return "1kΩ"
         elif self.component_type == "Vdc":
             return "5V"
-        elif self.component_type == "Spannings Bron":
+        elif self.component_type == "Voltage Source":
             return "12V"
-        elif self.component_type == "Isrc":
+        elif self.component_type == "Current Source":
             return "1mA"
         elif self.component_type == "GND":
             return "0V"
@@ -178,7 +178,7 @@ class ComponentItem(QGraphicsRectItem):
         if scene:
             main_window = scene.views()[0].main_window
             if hasattr(main_window, 'log_panel'):
-                main_window.log_panel.log_message(f"[INFO] {self.name} geroteerd naar {self.orientation}°")
+                main_window.log_panel.log_message(f"[INFO] {self.name} rotated to {self.orientation}°")
 
     def remove_connection_points(self):
         """Remove existing connection points"""
@@ -265,7 +265,7 @@ class ComponentItem(QGraphicsRectItem):
         mid_x = width / 2.0
         mid_y = height / 2.0
         self.connection_points = []
-        if self.component_type == "Weerstand":
+        if self.component_type == "Resistor":
             if self.orientation == 0:      # Horizontal (anchor at left, y=0 grid row)
                 left_point = ConnectionPoint(self, 0, 0, "in")
                 right_point = ConnectionPoint(self, width, 0, "out")
@@ -282,7 +282,7 @@ class ComponentItem(QGraphicsRectItem):
                 top_point = ConnectionPoint(self, mid_x, height, "in")
                 bottom_point = ConnectionPoint(self, mid_x, 0, "out")
                 self.connection_points.extend([top_point, bottom_point])
-        elif self.component_type in ["Spannings Bron", "Isrc"]:
+        elif self.component_type in ["Voltage Source", "Current Source"]:
             if self.orientation == 0:      # Vertical (anchor at top, x=0 column)
                 top_point = ConnectionPoint(self, 0, 0, "pos")
                 bottom_point = ConnectionPoint(self, 0, height, "neg")
@@ -314,7 +314,7 @@ class ComponentItem(QGraphicsRectItem):
                         gx, gy = free_pos
                         self.move_to_grid_position(gx, gy)
                         if hasattr(main_window, 'log_panel'):
-                            main_window.log_panel.log_message(f"[WARN] Component verplaatst naar vrij rasterpunt {free_pos} om overlap te voorkomen")
+                            main_window.log_panel.log_message(f"[WARN] Component moved to free grid point {free_pos} to avoid overlap")
         # Update all connected wires
         self.update_connected_wires()
         super().mouseReleaseEvent(event)
@@ -388,15 +388,15 @@ class ComponentItem(QGraphicsRectItem):
         width = rect.width()
         height = rect.height()
 
-        if self.component_type == "Weerstand":
+        if self.component_type == "Resistor":
             return self.create_resistor_icon(width, height)
         elif self.component_type == "Vdc":
             return self.create_vdc_icon(width, height)
         elif self.component_type == "GND":
             return self.create_ground_icon(width, height)
-        elif self.component_type == "Spannings Bron":
+        elif self.component_type == "Voltage Source":
             return self.create_voltage_source_icon(width, height)
-        elif self.component_type == "Isrc":
+        elif self.component_type == "Current Source":
             return self.create_current_source_icon(width, height)
         return None
 
