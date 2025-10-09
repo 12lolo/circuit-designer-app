@@ -45,19 +45,32 @@ class InspectPanel(QGroupBox):
     def apply_compact_layout(self):
         """Apply a compact look & feel to reduce excessive blank space."""
         # Tighten margins & spacing further if needed
-        self.formLayout_inspect.setContentsMargins(6, 4, 6, 4)
-        self.formLayout_inspect.setHorizontalSpacing(4)
-        self.formLayout_inspect.setVerticalSpacing(2)
+        self.formLayout_inspect.setContentsMargins(2, 2, 2, 2)
+        self.formLayout_inspect.setHorizontalSpacing(2)
+        self.formLayout_inspect.setVerticalSpacing(1)
 
         # Global stylesheet tweaks
         self.setStyleSheet(
             """
-            #InspectPanel QLabel { margin: 0px; }\n
-            #InspectPanel QLineEdit, #InspectPanel QComboBox {\n                padding: 2px 4px;\n                min-height: 18px;\n            }\n            #InspectPanel QPlainTextEdit {\n                margin-top: 2px;\n            }\n            """
+            #InspectPanel QLabel { margin: 0px; }
+            #InspectPanel QLineEdit, #InspectPanel QComboBox {
+                padding: 1px 2px;
+                min-height: 16px;
+                font-size: 12px;
+            }
+            #InspectPanel QPlainTextEdit {
+                margin-top: 1px;
+                font-size: 12px;
+            }
+            #InspectPanel QPushButton {
+                min-height: 18px;
+                font-size: 12px;
+            }
+            """
         )
         # Shrink simulation output box slightly
         if hasattr(self, 'textOutput'):
-            self.textOutput.setMaximumHeight(120)
+            self.textOutput.setMaximumHeight(100)
 
     def createDefaultElements(self):
         """Create default info label"""

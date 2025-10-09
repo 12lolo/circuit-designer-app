@@ -557,16 +557,13 @@ class MainWindow(QMainWindow):
 
     def on_zoom_in(self):
         self.graphicsViewSandbox.scale(1.2, 1.2)
-        self.log_panel.log_message("[INFO] Ingezoomd")
 
     def on_zoom_out(self):
         self.graphicsViewSandbox.scale(0.8, 0.8)
-        self.log_panel.log_message("[INFO] Uitgezoomd")
 
     def on_zoom_reset(self):
         """Reset zoom to 1:1"""
         self.graphicsViewSandbox.resetTransform()
-        self.log_panel.log_message("[INFO] Zoom gereset")
 
     def on_center_view(self):
         """Center the view on the scene"""

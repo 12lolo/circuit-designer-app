@@ -16,6 +16,8 @@ class DraggableButton(QPushButton):
         self.size_w = size_w  # Width in grid cells
         self.size_h = size_h  # Height in grid cells
         self.setAcceptDrops(False)
+        # Make the button visually bigger (twice as high)
+        self.setMinimumHeight(64)  # Adjust as needed for your UI (default QPushButton is ~32px)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
