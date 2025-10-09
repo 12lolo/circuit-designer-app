@@ -33,6 +33,10 @@ class DroppableGraphicsView(QGraphicsView):
         self.zoom_max = 5.0
         self.current_zoom = 1.0
 
+        # Stable zoom behavior
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+
     def clamp_view_to_visual_grid(self):
         """Clamp the view center so the visual grid always fills the viewport without exposing large blank areas.
         Works in scene coordinates using current transform scale.
@@ -68,27 +72,20 @@ class DroppableGraphicsView(QGraphicsView):
         if not hasattr(self, 'visual_grid_rect') or self.visual_grid_rect is None:
             return
         v_left, v_top, v_w, v_h = self.visual_grid_rect
-        # Scene (grid) dimensions in scene units
         grid_w = v_w
         grid_h = v_h
-        # Viewport pixel dimensions
         vp_w = max(1, self.viewport().width())
         vp_h = max(1, self.viewport().height())
-        # We want grid to be at least as large as viewport (no blank surround)
         scale_min_w = vp_w / grid_w
         scale_min_h = vp_h / grid_h
         min_scale = max(scale_min_w, scale_min_h)
-        # Update dynamic min
         self.zoom_min = min_scale
         current_scale = self.transform().m11()
         self.current_zoom = current_scale
-        if current_scale < min_scale * 0.999:  # allow tiny tolerance
+        if current_scale < min_scale * 0.999:
             factor = min_scale / current_scale
             self.scale(factor, factor)
             self.current_zoom = min_scale
-            if hasattr(self.main_window, 'log_panel'):
-                self.main_window.log_panel.log_message(f"[INFO] Min zoom aangepast: {self.current_zoom:.2f}x")
-        # After enforcing min zoom, also clamp panning
         self.clamp_view_to_visual_grid()
 
     def dragEnterEvent(self, event):
@@ -155,54 +152,47 @@ class DroppableGraphicsView(QGraphicsView):
         self.clamp_view_to_visual_grid()
 
     def wheelEvent(self, event):
-        """Handle mouse wheel events for zooming and scrolling"""
-        # Re-evaluate min zoom before processing
-        self.update_min_zoom()
-        if event.angleDelta().y() != 0:
-            # Zoom in/out
-            zoom_factor = 1.0
-            new_zoom = self.current_zoom
-
-            if event.angleDelta().y() > 0:
-                # Zoom in
-                zoom_factor = min(self.zoom_factor, self.zoom_max / self.current_zoom)
-                new_zoom = self.current_zoom * zoom_factor
+        """Handle mouse wheel events: scroll up/down, Ctrl+scroll for zoom."""
+        modifiers = event.modifiers()
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            # Ctrl+scroll: zoom in/out (AnchorUnderMouse keeps cursor position stable)
+            dy = event.angleDelta().y()
+            if dy == 0 and hasattr(event, 'pixelDelta'):
+                dy = event.pixelDelta().y()
+            if dy != 0:
+                # Compute desired zoom factor
+                zoom_in = dy > 0
+                base_factor = self.zoom_factor if zoom_in else (1.0 / self.zoom_factor)
+                current_scale = self.transform().m11() or 1.0
+                # Compute dynamic min scale from visual grid and viewport
+                min_scale = 0.0
+                if hasattr(self, 'visual_grid_rect') and self.visual_grid_rect is not None:
+                    v_left, v_top, v_w, v_h = self.visual_grid_rect
+                    vp_w = max(1, self.viewport().width())
+                    vp_h = max(1, self.viewport().height())
+                    min_scale = max(vp_w / max(1e-6, v_w), vp_h / max(1e-6, v_h))
+                else:
+                    min_scale = self.zoom_min
+                # Clamp new scale between [min_scale, zoom_max]
+                target_scale = current_scale * base_factor
+                if target_scale < min_scale:
+                    target_scale = min_scale
+                if target_scale > self.zoom_max:
+                    target_scale = self.zoom_max
+                # Compute factor to apply
+                apply_factor = target_scale / current_scale if current_scale > 0 else 1.0
+                if abs(apply_factor - 1.0) > 1e-6:
+                    self.scale(apply_factor, apply_factor)
+                    self.current_zoom = target_scale
+                event.accept()
             else:
-                # Zoom out
-                zoom_factor = max(1.0 / self.zoom_factor, self.zoom_min / self.current_zoom)
-                new_zoom = self.current_zoom * zoom_factor
-
-            if new_zoom < self.zoom_min:
-                zoom_factor = self.zoom_min / self.current_zoom
-                new_zoom = self.zoom_min
-            elif new_zoom > self.zoom_max:
-                zoom_factor = self.zoom_max / self.current_zoom
-                new_zoom = self.zoom_max
-
-            if zoom_factor != 1.0:
-                # Get mouse position for zoom center
-                mouse_pos = event.position()
-                scene_pos = self.mapToScene(mouse_pos.toPoint())
-
-                # Apply zoom
-                self.scale(zoom_factor, zoom_factor)
-                self.current_zoom = new_zoom
-
-                # Center zoom on mouse position
-                new_mouse_pos = self.mapFromScene(scene_pos)
-                delta = new_mouse_pos - mouse_pos.toPoint()
-                self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + delta.x())
-                self.verticalScrollBar().setValue(self.verticalScrollBar().value() + delta.y())
-
-                # Log zoom action using the new log panel
-                if hasattr(self.main_window, 'log_panel'):
-                    self.main_window.log_panel.log_message(f"[INFO] Zoom: {self.current_zoom:.1f}x")
-            # After zoom, clamp
+                event.ignore()
+            # Clamp after handling zoom
             self.clamp_view_to_visual_grid()
-            event.accept()
         else:
-            # Normal scrolling
+            # Default scrolling behavior
             super().wheelEvent(event)
+            self.clamp_view_to_visual_grid()
 
     def keyPressEvent(self, event):
         """Handle keyboard shortcuts"""
@@ -259,8 +249,6 @@ class DroppableGraphicsView(QGraphicsView):
             zoom_factor = min(self.zoom_factor, self.zoom_max / self.current_zoom)
             self.scale(zoom_factor, zoom_factor)
             self.current_zoom *= zoom_factor
-            if hasattr(self.main_window, 'log_panel'):
-                self.main_window.log_panel.log_message(f"[INFO] Zoom in: {self.current_zoom:.1f}x")
             self.clamp_view_to_visual_grid()
 
     def zoom_out(self):
@@ -270,8 +258,6 @@ class DroppableGraphicsView(QGraphicsView):
             zoom_factor = max(1.0 / self.zoom_factor, self.zoom_min / self.current_zoom)
             self.scale(zoom_factor, zoom_factor)
             self.current_zoom *= zoom_factor
-            if hasattr(self.main_window, 'log_panel'):
-                self.main_window.log_panel.log_message(f"[INFO] Zoom out: {self.current_zoom:.1f}x")
             self.clamp_view_to_visual_grid()
 
     def reset_zoom(self):
@@ -279,8 +265,6 @@ class DroppableGraphicsView(QGraphicsView):
         zoom_factor = 1.0 / self.current_zoom
         self.scale(zoom_factor, zoom_factor)
         self.current_zoom = 1.0
-        if hasattr(self.main_window, 'log_panel'):
-            self.main_window.log_panel.log_message("[INFO] Zoom reset: 1.0x")
         self.update_min_zoom()
         self.clamp_view_to_visual_grid()
 
@@ -293,8 +277,6 @@ class DroppableGraphicsView(QGraphicsView):
         else:
             # If no items, center on origin
             self.centerOn(0, 0)
-        if hasattr(self.main_window, 'log_panel'):
-            self.main_window.log_panel.log_message("[INFO] View centered")
         self.clamp_view_to_visual_grid()
 
     def resizeEvent(self, event):
