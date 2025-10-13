@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QGraphicsScene, QMessageBox, QFileDialog
 )
-from PyQt6.QtCore import Qt, QPointF, QSettings
+from PyQt6.QtCore import Qt, QPointF, QSettings, QEvent
 from PyQt6.QtGui import QPen, QColor
 
 from components import (
@@ -39,6 +39,9 @@ class MainWindow(QMainWindow):
         # Track selected items for deletion
         self.selected_items = []
         self.selected_component = None
+
+        # Floating controls
+        self._floating_controls = None
 
         self.setupUi()
 
@@ -102,9 +105,8 @@ class MainWindow(QMainWindow):
         self.graphicsViewSandbox = DroppableGraphicsView(self)
         self.horizontalLayout_sandbox.addWidget(self.graphicsViewSandbox)
 
-        # Canvas tools
+        # Canvas tools controller (no sidebar layout; use floating controls instead)
         self.canvas_tools = CanvasTools()
-        self.horizontalLayout_sandbox.addLayout(self.canvas_tools.get_layout())
 
         # Setup graphics scene
         self.scene = QGraphicsScene(self)
@@ -116,10 +118,49 @@ class MainWindow(QMainWindow):
         # Draw grid
         self.drawGrid()
 
-        # Connect canvas tool signals
+        # Connect canvas tool signals (zoom in/out + probe retained)
         self.canvas_tools.zoom_in_requested.connect(self.on_zoom_in)
         self.canvas_tools.zoom_out_requested.connect(self.on_zoom_out)
         self.canvas_tools.probe_requested.connect(self.on_probe)
+        # Connect new floating run/clear actions
+        self.canvas_tools.run_requested.connect(self.on_run)
+        self.canvas_tools.clear_requested.connect(self.on_clear_sandbox)
+
+        # Create floating controls overlay and position it
+        try:
+            self._floating_controls = self.canvas_tools.get_floating_widget(self.graphicsViewSandbox.viewport())
+            self._position_floating_controls()
+            # Track viewport resizes to reposition overlay
+            self.graphicsViewSandbox.viewport().installEventFilter(self)
+        except Exception:
+            # Fallback: ignore floating controls if creation fails
+            self._floating_controls = None
+
+    def _position_floating_controls(self):
+        """Place floating controls at a fixed margin inside the canvas (top-left)."""
+        if self._floating_controls is None:
+            return
+        margin_x = 10
+        margin_y = 10
+        self._floating_controls.adjustSize()
+        self._floating_controls.move(margin_x, margin_y)
+        self._floating_controls.raise_()
+        self._floating_controls.show()
+
+    def eventFilter(self, obj, event):
+        # Reposition floating controls when the canvas viewport resizes
+        if obj is getattr(self.graphicsViewSandbox, 'viewport', lambda: None)() and event.type() == QEvent.Type.Resize:
+            self._position_floating_controls()
+        return super().eventFilter(obj, event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Ensure overlay is positioned after initial show and layout
+        try:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, self._position_floating_controls)
+        except Exception:
+            self._position_floating_controls()
 
     def drawGrid(self):
         """Draw the grid on the graphics scene with an outer non-placeable border.
@@ -302,6 +343,8 @@ class MainWindow(QMainWindow):
         self.toolbar_manager.zoom_out_requested.connect(self.on_zoom_out)
         self.toolbar_manager.zoom_reset_requested.connect(self.on_zoom_reset)
         self.toolbar_manager.center_view_requested.connect(self.on_center_view)
+        # Removed: clear sandbox action is now in floating controls
+        # self.toolbar_manager.clear_sandbox_requested.connect(self.on_clear_sandbox)
 
     def keyPressEvent(self, event):
         """Enhanced keyboard event handling"""
@@ -361,6 +404,32 @@ class MainWindow(QMainWindow):
         self.inspect_panel.show_default_state()
 
         self.log_panel.log_message("[INFO] New project started")
+
+    def on_clear_sandbox(self):
+        """Clear all items from the sandbox after confirmation and redraw the grid."""
+        reply = QMessageBox.question(
+            self,
+            'Clear Sandbox',
+            'Are you sure you want to clear the sandbox?\nAll components and wires will be removed.',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Clear the scene and redraw grid
+        self.scene.clear()
+        self.drawGrid()
+
+        # Reset selection and panels
+        self.selected_component = None
+        if self.sim_output_panel:
+            self.sim_output_panel.clear_output()
+        if self.inspect_panel:
+            self.inspect_panel.show_default_state()
+
+        if hasattr(self, 'log_panel'):
+            self.log_panel.log_message('[INFO] Sandbox cleared')
 
     def serialize_project_data(self):
         """Serialize the current project data to a dictionary"""
