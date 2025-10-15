@@ -1,8 +1,8 @@
 from PyQt6.QtWidgets import (
     QVBoxLayout, QToolButton, QSpacerItem, QSizePolicy, QWidget, QHBoxLayout, QStyle
 )
-from PyQt6.QtCore import QObject, pyqtSignal, QRectF, QPointF, Qt, QSize
-from PyQt6.QtGui import QIcon, QPixmap, QPainter, QPen, QColor, QPolygonF
+from PyQt6.QtCore import QObject, pyqtSignal, QRectF, QPointF, Qt, QSize, QEvent
+from PyQt6.QtGui import QIcon, QPixmap, QPainter, QPen, QColor, QPolygonF, QCursor
 
 
 class CanvasTools(QObject):
@@ -118,22 +118,182 @@ class CanvasTools(QObject):
         p.end()
         return QIcon(pm)
 
+    class FloatingControls(QWidget):
+        """Draggable floating controls that snap to the nearest corner of parent viewport.
+        The widget keeps an 'anchor' property: one of 'top-left', 'top-right', 'bottom-left', 'bottom-right'.
+        """
+        def __init__(self, parent: QWidget | None = None, margin: int = 10):
+            super().__init__(parent)
+            self.setObjectName("canvasFloatingControls")
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            self.setMouseTracking(True)
+            self._dragging = False
+            self._drag_start_pos = QPointF()
+            self._start_widget_pos = QPointF()
+            self.anchor: str = 'top-left'
+            self.margin: int = margin
+            # Styling
+            self.setStyleSheet(
+                "#canvasFloatingControls {"
+                "  background-color: rgba(40, 40, 40, 180);"
+                "  border-radius: 8px;"
+                "}"
+            )
+            # Track parent geometry updates so we always stay attached to the viewport edges
+            if parent is not None:
+                try:
+                    parent.installEventFilter(self)
+                except Exception:
+                    pass
+
+        def set_anchor(self, anchor: str):
+            if anchor in ("top-left", "top-right", "bottom-left", "bottom-right"):
+                self.anchor = anchor
+                self.setProperty("anchor", anchor)
+
+        def get_anchor(self) -> str:
+            return getattr(self, 'anchor', 'top-left')
+
+        def compute_anchor_pos(self) -> QPointF:
+            parent = self.parentWidget()
+            if not parent:
+                return QPointF(0, 0)
+            parent_w = parent.width()
+            parent_h = parent.height()
+            w = self.width()
+            h = self.height()
+            m = self.margin
+            if self.anchor == 'top-left':
+                return QPointF(m, m)
+            if self.anchor == 'top-right':
+                return QPointF(parent_w - w - m, m)
+            if self.anchor == 'bottom-left':
+                return QPointF(m, parent_h - h - m)
+            # bottom-right default
+            return QPointF(parent_w - w - m, parent_h - h - m)
+
+        def reposition_to_anchor(self):
+            pos = self.compute_anchor_pos()
+            self.move(int(pos.x()), int(pos.y()))
+            self.raise_()
+            self.show()
+
+        def _clamp_to_parent(self, x: int, y: int) -> tuple[int, int]:
+            parent = self.parentWidget()
+            if not parent:
+                return x, y
+            max_x = max(0, parent.width() - self.width())
+            max_y = max(0, parent.height() - self.height())
+            return max(0, min(x, max_x)), max(0, min(y, max_y))
+
+        def set_overlay_parent(self, new_parent: QWidget | None):
+            """Reparent the overlay to a new parent (e.g., a new viewport), reinstalling event filter and re-anchoring."""
+            try:
+                old_parent = self.parentWidget()
+                if old_parent is new_parent:
+                    return
+                if old_parent is not None:
+                    try:
+                        old_parent.removeEventFilter(self)
+                    except Exception:
+                        pass
+                self.setParent(new_parent)
+                if new_parent is not None:
+                    try:
+                        new_parent.installEventFilter(self)
+                    except Exception:
+                        pass
+                # Ensure geometry updated before reposition
+                self.adjustSize()
+                self.reposition_to_anchor()
+            except Exception:
+                pass
+
+        def mousePressEvent(self, event):
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._dragging = True
+                self._drag_start_pos = event.globalPosition()
+                self._start_widget_pos = QPointF(self.x(), self.y())
+                self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+                event.accept()
+                return
+            super().mousePressEvent(event)
+
+        def mouseMoveEvent(self, event):
+            if self._dragging:
+                delta = event.globalPosition() - self._drag_start_pos
+                new_x = int(self._start_widget_pos.x() + delta.x())
+                new_y = int(self._start_widget_pos.y() + delta.y())
+                new_x, new_y = self._clamp_to_parent(new_x, new_y)
+                self.move(new_x, new_y)
+                event.accept()
+                return
+            super().mouseMoveEvent(event)
+
+        def mouseReleaseEvent(self, event):
+            if self._dragging and event.button() == Qt.MouseButton.LeftButton:
+                self._dragging = False
+                self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+                # Snap to nearest corner of parent
+                parent = self.parentWidget()
+                if parent:
+                    corners = {
+                        'top-left': QPointF(self.margin, self.margin),
+                        'top-right': QPointF(parent.width() - self.width() - self.margin, self.margin),
+                        'bottom-left': QPointF(self.margin, parent.height() - self.height() - self.margin),
+                        'bottom-right': QPointF(parent.width() - self.width() - self.margin, parent.height() - self.height() - self.margin),
+                    }
+                    # compute distance from widget center to each corner target
+                    center = QPointF(self.x() + self.width() / 2, self.y() + self.height() / 2)
+                    def dist2(a: QPointF, b: QPointF) -> float:
+                        dx = a.x() - b.x()
+                        dy = a.y() - b.y()
+                        return dx*dx + dy*dy
+                    best_anchor = min(corners.keys(), key=lambda k: dist2(center, QPointF(corners[k].x() + self.width()/2, corners[k].y() + self.height()/2)))
+                    self.set_anchor(best_anchor)
+                    self.reposition_to_anchor()
+                event.accept()
+                return
+            super().mouseReleaseEvent(event)
+
+        def enterEvent(self, event):
+            # Indicate draggability
+            if not self._dragging:
+                self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+            super().enterEvent(event)
+
+        def leaveEvent(self, event):
+            if not self._dragging:
+                self.unsetCursor()
+            super().leaveEvent(event)
+
+        def eventFilter(self, watched, event):
+            """Keep the overlay anchored to the viewport; react to parent geometry updates."""
+            try:
+                if watched is self.parentWidget():
+                    if event.type() in (QEvent.Type.Resize, QEvent.Type.Move, QEvent.Type.Show, QEvent.Type.LayoutRequest):
+                        self.reposition_to_anchor()
+                return False
+            except Exception:
+                return False
+
     # New floating controls API
     def get_floating_widget(self, parent: QWidget) -> QWidget:
         """Create (or return) a floating controls widget to overlay on the canvas.
         Order: Zoom In, Zoom Out, Clear, Run.
+        The widget is draggable and snaps to the nearest corner of the parent viewport.
         """
         if self.floating_widget is not None:
+            # Ensure parent is correct (viewport); if changed, reparent and re-anchor
+            if self.floating_widget.parentWidget() is not parent and hasattr(self.floating_widget, 'set_overlay_parent'):
+                try:
+                    self.floating_widget.set_overlay_parent(parent)
+                except Exception:
+                    self.floating_widget.setParent(parent)
             return self.floating_widget
 
-        w = QWidget(parent)
-        w.setObjectName("canvasFloatingControls")
-        w.setStyleSheet(
-            "#canvasFloatingControls {"
-            "  background-color: rgba(40, 40, 40, 180);"
-            "  border-radius: 8px;"
-            "}"
-        )
+        # Use the draggable snapping controls widget
+        w = CanvasTools.FloatingControls(parent, margin=10)
         layout = QHBoxLayout(w)
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(6)

@@ -132,14 +132,30 @@ class MainWindow(QMainWindow):
             self._position_floating_controls()
             # Track viewport resizes to reposition overlay
             self.graphicsViewSandbox.viewport().installEventFilter(self)
+            # Also track panning via scrollbars to keep overlay attached to viewport corners
+            try:
+                self.graphicsViewSandbox.horizontalScrollBar().valueChanged.connect(lambda _: self._position_floating_controls())
+                self.graphicsViewSandbox.verticalScrollBar().valueChanged.connect(lambda _: self._position_floating_controls())
+            except Exception:
+                pass
         except Exception:
             # Fallback: ignore floating controls if creation fails
             self._floating_controls = None
 
     def _position_floating_controls(self):
-        """Place floating controls at a fixed margin inside the canvas (top-left)."""
+        """Place floating controls at a corner inside the canvas viewport, based on its current anchor."""
         if self._floating_controls is None:
             return
+        try:
+            # Prefer anchor-based repositioning if available (draggable snapping)
+            if hasattr(self._floating_controls, 'reposition_to_anchor'):
+                # Ensure size hint is realized before computing anchor positions
+                self._floating_controls.adjustSize()
+                self._floating_controls.reposition_to_anchor()
+                return
+        except Exception:
+            pass
+        # Fallback: top-left margin
         margin_x = 10
         margin_y = 10
         self._floating_controls.adjustSize()
