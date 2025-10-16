@@ -4,13 +4,43 @@ A PyQt6-based electronic circuit simulation application for designing and analyz
 
 ## Features
 
-- **Circuit Design**: Drag and drop electronic components (resistors, voltage sources, current sources, etc.)
+### Circuit Design
+- **Drag and Drop**: Electronic components (resistors, voltage sources, current sources, etc.)
 - **Interactive Canvas**: Grid-based component placement with snapping
 - **Wire Connections**: Connect components with visual wires
 - **Component Properties**: Edit component values, names, and orientations
-- **Project Management**: Create new, open, and save projects
-- **Circuit Simulation**: Run simulations on designed circuits
-- **Zoom & Pan**: Navigate large circuit designs easily
+- **Rotation**: Rotate components with `R` key (90° increments)
+
+### Editing & Navigation
+- **Undo/Redo**: Full undo/redo support for all actions (`Ctrl+Z` / `Ctrl+Shift+Z`)
+- **Copy/Paste**: Duplicate components easily (`Ctrl+C` / `Ctrl+V`)
+- **Selection Tools**: Select all, deselect, delete selected items
+- **Zoom & Pan**: Navigate large circuit designs with mouse wheel or keyboard
+- **Middle-click Panning**: Pan the canvas with middle mouse button
+
+### Project Management
+- **Visual Project Browser**: Grid view with thumbnails of all projects
+- **Search & Filter**: Real-time search to find projects by name
+- **Sort Options**: Sort by name (A-Z/Z-A) or last modified (newest/oldest)
+- **Auto-save**: Projects automatically save to default directory
+- **Export Copies**: Share projects by exporting to any location
+- **Project Thumbnails**: Preview circuits before opening
+- **Quick Actions**: Right-click to rename or delete projects
+
+### Simulation & Analysis
+- **Netlist Generation**: Automatically builds netlists for backend simulation
+- **SPICE Export**: Generates SPICE-compatible netlists
+- **Circuit Validation**: Detects floating nodes, missing connections, and errors
+- **Backend Ready**: Clean API for integration with simulation engines
+
+### Export & Sharing
+- **PNG Export**: Export circuit diagrams as high-quality images (`Ctrl+E`)
+- **Project Copy**: Save copies for sharing without affecting originals
+
+### Customization
+- **Keyboard Shortcuts**: Customize all keyboard shortcuts via Settings menu
+- **Shortcuts Manager**: View, edit, and reset shortcuts to defaults
+- **Conflict Detection**: Prevents duplicate shortcut assignments
 
 ## Project Structure
 
@@ -95,16 +125,75 @@ python main_window.py
 
 ### Keyboard Shortcuts
 
+#### File Operations
 - `Ctrl+N` - New project
-- `Ctrl+O` - Open project
-- `Ctrl+S` - Save project
-- `F5` - Run simulation
-- `Shift+F5` - Stop simulation
+- `Ctrl+O` - Open project (opens project browser)
+- `Ctrl+S` - Save project (to default projects directory)
+- `Ctrl+Shift+S` - Save copy (to any location for sharing)
+- `Ctrl+E` - Export as PNG
+
+#### Editing
+- `Ctrl+Z` - Undo
+- `Ctrl+Shift+Z` - Redo
+- `Ctrl+C` - Copy selected components
+- `Ctrl+V` - Paste components
 - `Ctrl+A` - Select all
 - `Ctrl+D` - Deselect all
 - `Delete` - Delete selected items
-- `R` - Rotate selected component (Shift+R for opposite direction)
 - `Escape` - Clear selection
+
+#### Component Operations
+- `R` - Rotate selected component 90° clockwise
+- `Shift+R` - Rotate selected component 90° counter-clockwise
+
+#### View Navigation
+- `Ctrl+=` / `Ctrl+-` - Zoom in/out
+- `Ctrl+0` - Reset zoom
+- `Home` - Center view
+- `Arrow keys` - Pan canvas
+- `Middle mouse button` - Pan (drag)
+- `Ctrl+Mouse wheel` - Zoom
+
+#### Simulation
+- `F5` - Run simulation / Generate netlist
+- `Shift+F5` - Stop simulation
+
+#### Other
+- `F1` - Focus canvas
+- `Ctrl+L` - Clear log
+- `Ctrl+Shift+C` - Copy simulation output
+
+### Menu Bar
+
+The application includes a full menu bar for easy access to all features:
+
+#### File Menu
+- New, Open, Save, Save Copy
+- Export as PNG
+
+#### Edit Menu
+- Undo, Redo
+- Copy, Paste
+- Select All, Deselect All
+
+#### View Menu
+- Zoom controls
+- Center View, Focus Canvas
+- Clear Log
+
+#### Simulation Menu
+- Run, Stop
+- Copy Output
+
+#### Settings Menu
+- **Keyboard Shortcuts**: Customize all shortcuts
+  - Click on any shortcut to change it
+  - Press your desired key combination
+  - Reset to defaults button available
+  - Conflict detection prevents duplicate shortcuts
+
+#### Help Menu
+- About ECis-full
 
 ## Components
 
@@ -115,12 +204,64 @@ The application supports various electronic components:
 - Ground connections
 - Junction points for wire connections
 
+## Project Management
+
+### Project Browser
+The application features a visual project browser for easy project management:
+- **Grid view** with project thumbnails (200x200px previews)
+- **Auto-saves** to `~/PycharmProjects/circuit-designer-app/projects/` by default
+- **Visual previews** of each project's circuit layout
+- **Quick actions**: Double-click to open, right-click to rename/delete
+- **Timestamps** showing when each project was last saved
+
+### Saving Projects
+- **Save (Ctrl+S)**: Saves to the default projects directory for quick access
+- **Save Copy (Ctrl+Shift+S)**: Export a copy anywhere (e.g., Downloads for sharing)
+- All projects include embedded thumbnails for the browser
+
+## Backend Integration
+
+The application generates netlists for simulation backends:
+
+```python
+# The netlist is generated when pressing F5
+netlist = {
+    "components": [
+        {
+            "name": "R1",
+            "type": "Resistor",
+            "value": "1k",
+            "nodes": [
+                {"node": "n1", "pin": "in"},
+                {"node": "n2", "pin": "out"}
+            ]
+        },
+        ...
+    ],
+    "nodes": {
+        "n0": [...],  # Ground node
+        "n1": [...],
+        "n2": [...]
+    },
+    "ground_node": "n0",
+    "errors": [...]  # Validation errors/warnings
+}
+```
+
+The netlist builder (`ui/netlist_builder.py`) provides:
+- **Node connectivity analysis**: Automatically groups connected pins into nodes
+- **SPICE export**: Convert to SPICE format for simulation
+- **Validation**: Detect floating nodes, missing values, disconnected components
+- **Clean API**: Easy integration with any simulation engine
+
+To integrate your simulation backend, modify `main_window.py:on_run()` to pass the netlist to your solver.
+
 ## File Format
 
 Projects are saved as `.ecis` files in JSON format containing:
 - Component data (type, position, value, orientation)
 - Wire connection information
-- Project metadata
+- Project metadata (thumbnail, save timestamp, version)
 
 ## Troubleshooting
 

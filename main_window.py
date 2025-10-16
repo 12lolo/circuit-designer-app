@@ -3,10 +3,10 @@ import json
 import os
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QGraphicsScene, QMessageBox, QFileDialog
+    QSplitter, QGraphicsScene, QMessageBox, QFileDialog, QDialog
 )
 from PyQt6.QtCore import Qt, QPointF, QSettings, QEvent
-from PyQt6.QtGui import QPen, QColor
+from PyQt6.QtGui import QPen, QColor, QUndoStack
 
 from components import (
     Wire, JunctionPoint,
@@ -21,6 +21,15 @@ from ui.simulation_engine import SimulationEngine
 from ui.canvas_tools import CanvasTools
 from ui.log_panel import LogPanel
 from ui.sim_output_panel import SimulationOutputPanel
+from ui.project_manager import ProjectManager
+from ui.project_browser import ProjectBrowserDialog
+from ui.netlist_builder import NetlistBuilder
+from ui.shortcuts_dialog import ShortcutsDialog
+from ui.undo_commands import (
+    AddComponentCommand, DeleteComponentCommand, MoveComponentCommand,
+    RotateComponentCommand, AddWireCommand, DeleteWireCommand, MultiDeleteCommand
+)
+from ui.quick_access_toolbar import make_menu_pinnable
 
 
 class MainWindow(QMainWindow):
@@ -42,6 +51,22 @@ class MainWindow(QMainWindow):
 
         # Floating controls
         self._floating_controls = None
+
+        # Project management
+        self.project_manager = ProjectManager()
+        self.current_project_name = None  # Track current project filename
+
+        # Undo/Redo system
+        self.undo_stack = QUndoStack(self)
+
+        # Netlist builder for backend integration
+        self.netlist_builder = NetlistBuilder()
+
+        # Clipboard for copy/paste
+        self.clipboard_data = None
+
+        # Track unsaved changes
+        self.has_unsaved_changes = False
 
         self.setupUi()
 
@@ -78,6 +103,9 @@ class MainWindow(QMainWindow):
 
         # Setup toolbar and connect signals
         self.setupToolbarAndConnections()
+
+        # Connect undo stack to track changes
+        self.undo_stack.indexChanged.connect(self.on_undo_stack_changed)
 
         # Stretch factors: give more space to upper area initially
         self.mainVerticalSplitter.setStretchFactor(0, 5)
@@ -342,14 +370,22 @@ class MainWindow(QMainWindow):
         """Setup toolbar and connect all signals"""
         self.toolbar_manager = ToolbarManager(self)
 
+        # Setup menu bar
+        self.setup_menu_bar()
+
         # Connect toolbar signals
         self.toolbar_manager.new_requested.connect(self.on_new)
         self.toolbar_manager.open_requested.connect(self.on_open)
         self.toolbar_manager.save_requested.connect(self.on_save)
+        self.toolbar_manager.save_copy_requested.connect(self.on_save_copy)
+        self.toolbar_manager.undo_requested.connect(self.undo_stack.undo)
+        self.toolbar_manager.redo_requested.connect(self.undo_stack.redo)
         self.toolbar_manager.run_requested.connect(self.on_run)
         self.toolbar_manager.stop_requested.connect(self.on_stop)
 
         # Connect additional action signals
+        self.toolbar_manager.copy_requested.connect(self.on_copy)
+        self.toolbar_manager.paste_requested.connect(self.on_paste)
         self.toolbar_manager.copy_output_requested.connect(self.on_copy_output_clicked)
         self.toolbar_manager.select_all_requested.connect(self.on_select_all)
         self.toolbar_manager.deselect_all_requested.connect(self.on_deselect_all)
@@ -359,21 +395,117 @@ class MainWindow(QMainWindow):
         self.toolbar_manager.zoom_out_requested.connect(self.on_zoom_out)
         self.toolbar_manager.zoom_reset_requested.connect(self.on_zoom_reset)
         self.toolbar_manager.center_view_requested.connect(self.on_center_view)
+        self.toolbar_manager.export_png_requested.connect(self.on_export_png)
         # Removed: clear sandbox action is now in floating controls
         # self.toolbar_manager.clear_sandbox_requested.connect(self.on_clear_sandbox)
+
+    def setup_menu_bar(self):
+        """Setup the menu bar with pinnable items"""
+        menubar = self.menuBar()
+        toolbar = self.toolbar_manager.toolbar
+
+        # File menu
+        file_menu = menubar.addMenu("&File")
+        make_menu_pinnable(file_menu, toolbar, self.toolbar_manager.actionNieuw, "New")
+        make_menu_pinnable(file_menu, toolbar, self.toolbar_manager.actionOpenen, "Open")
+        make_menu_pinnable(file_menu, toolbar, self.toolbar_manager.actionOpslaan, "Save")
+        make_menu_pinnable(file_menu, toolbar, self.toolbar_manager.actionSaveCopy, "Save Copy")
+        file_menu.addSeparator()
+        make_menu_pinnable(file_menu, toolbar, self.toolbar_manager.actionExportPNG, "Export PNG")
+
+        # Edit menu
+        edit_menu = menubar.addMenu("&Edit")
+        make_menu_pinnable(edit_menu, toolbar, self.toolbar_manager.actionUndo, "Undo")
+        make_menu_pinnable(edit_menu, toolbar, self.toolbar_manager.actionRedo, "Redo")
+        edit_menu.addSeparator()
+        make_menu_pinnable(edit_menu, toolbar, self.toolbar_manager.actionCopy, "Copy")
+        make_menu_pinnable(edit_menu, toolbar, self.toolbar_manager.actionPaste, "Paste")
+        edit_menu.addSeparator()
+        make_menu_pinnable(edit_menu, toolbar, self.toolbar_manager.actionSelectAll, "Select All")
+        make_menu_pinnable(edit_menu, toolbar, self.toolbar_manager.actionDeselectAll, "Deselect All")
+
+        # View menu
+        view_menu = menubar.addMenu("&View")
+        make_menu_pinnable(view_menu, toolbar, self.toolbar_manager.actionZoomIn, "Zoom In")
+        make_menu_pinnable(view_menu, toolbar, self.toolbar_manager.actionZoomOut, "Zoom Out")
+        make_menu_pinnable(view_menu, toolbar, self.toolbar_manager.actionZoomReset, "Reset Zoom")
+        view_menu.addSeparator()
+        make_menu_pinnable(view_menu, toolbar, self.toolbar_manager.actionCenterView, "Center View")
+        make_menu_pinnable(view_menu, toolbar, self.toolbar_manager.actionFocusCanvas, "Focus Canvas")
+        view_menu.addSeparator()
+        make_menu_pinnable(view_menu, toolbar, self.toolbar_manager.actionClearLog, "Clear Log")
+
+        # Simulation menu
+        sim_menu = menubar.addMenu("&Simulation")
+        make_menu_pinnable(sim_menu, toolbar, self.toolbar_manager.actionRun, "Run")
+        make_menu_pinnable(sim_menu, toolbar, self.toolbar_manager.actionStop, "Stop")
+        sim_menu.addSeparator()
+        make_menu_pinnable(sim_menu, toolbar, self.toolbar_manager.actionCopyOutput, "Copy Output")
+
+        # Settings menu
+        settings_menu = menubar.addMenu("&Settings")
+
+        shortcuts_action = settings_menu.addAction("Keyboard Shortcuts...")
+        shortcuts_action.triggered.connect(self.on_show_shortcuts_dialog)
+
+        # Help menu
+        help_menu = menubar.addMenu("&Help")
+
+        about_action = help_menu.addAction("About ECis-full")
+        about_action.triggered.connect(self.on_about)
+
+    def on_show_shortcuts_dialog(self):
+        """Show the keyboard shortcuts settings dialog"""
+        dialog = ShortcutsDialog(self.toolbar_manager, self)
+        dialog.exec()
+
+    def on_about(self):
+        """Show about dialog"""
+        QMessageBox.about(
+            self,
+            "About ECis-full",
+            "<h2>ECis-full</h2>"
+            "<p>A PyQt6-based electronic circuit simulation application.</p>"
+            "<p>Version 1.0</p>"
+            "<p>For designing and analyzing electronic circuits with "
+            "visual netlist generation and simulation support.</p>"
+        )
+
+    def on_undo_stack_changed(self):
+        """Called when undo stack changes (indicates unsaved changes)"""
+        self.mark_as_changed()
+
+    def mark_as_changed(self):
+        """Mark the project as having unsaved changes"""
+        if not self.has_unsaved_changes:
+            self.has_unsaved_changes = True
+            self.update_window_title()
+
+    def mark_as_saved(self):
+        """Mark the project as saved"""
+        self.has_unsaved_changes = False
+        self.update_window_title()
+
+    def update_window_title(self):
+        """Update window title to show project name and unsaved status"""
+        title = "ECis-full"
+        if self.current_project_name:
+            title += f" - {self.current_project_name}"
+        if self.has_unsaved_changes:
+            title += " *"
+        self.setWindowTitle(title)
 
     def keyPressEvent(self, event):
         """Enhanced keyboard event handling"""
         key = event.key()
         modifiers = event.modifiers()
 
-        # Handle component rotation for selected items
+        # Handle component rotation for selected items (with undo support)
         if key == Qt.Key.Key_R and not (modifiers & Qt.KeyboardModifier.ControlModifier):
             if self.selected_component and hasattr(self.selected_component, 'component_type'):
-                if modifiers & Qt.KeyboardModifier.ShiftModifier:
-                    self.selected_component.rotate_component(-90)
-                else:
-                    self.selected_component.rotate_component(90)
+                angle = -90 if modifiers & Qt.KeyboardModifier.ShiftModifier else 90
+                command = RotateComponentCommand(self.selected_component, angle, f"Rotate {self.selected_component.component_type}")
+                self.undo_stack.push(command)
                 event.accept()
                 return
 
@@ -419,6 +551,11 @@ class MainWindow(QMainWindow):
             self.sim_output_panel.clear_output()
         self.inspect_panel.show_default_state()
 
+        # Reset project name and clear undo stack
+        self.current_project_name = None
+        self.undo_stack.clear()
+        self.mark_as_saved()
+
         self.log_panel.log_message("[INFO] New project started")
 
     def on_clear_sandbox(self):
@@ -446,6 +583,24 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, 'log_panel'):
             self.log_panel.log_message('[INFO] Sandbox cleared')
+
+    def _get_next_project_name(self):
+        """Generate the next available project name (ECIS_Project_1, ECIS_Project_2, etc.)"""
+        projects_dir = self.project_manager.default_project_dir
+        counter = 1
+
+        while True:
+            name = f"ECIS_Project_{counter}"
+            filepath = projects_dir / f"{name}.ecis"
+
+            if not filepath.exists():
+                return name
+
+            counter += 1
+
+            # Safety limit
+            if counter > 9999:
+                return f"ECIS_Project_{counter}"
 
     def serialize_project_data(self):
         """Serialize the current project data to a dictionary"""
@@ -571,7 +726,7 @@ class MainWindow(QMainWindow):
         self.refresh_all_component_connection_points()
 
     def on_open(self):
-        """Open an existing project file"""
+        """Open an existing project using the project browser"""
         # Ask for confirmation if there are unsaved changes
         if self.scene.items():
             reply = QMessageBox.question(
@@ -584,92 +739,205 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        # Show file dialog to select a project file
-        file_name, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open Project",
-            "",
-            "ECis Project Files (*.ecis);;JSON Files (*.json);;All Files (*)"
-        )
+        # Show project browser dialog
+        browser = ProjectBrowserDialog(self.project_manager, self)
+        if browser.exec() == QDialog.DialogCode.Accepted:
+            filepath = browser.get_selected_project_path()
+            if filepath:
+                try:
+                    # Load project data
+                    project_data = self.project_manager.load_project(filepath)
 
-        if file_name:
-            try:
-                with open(file_name, 'r', encoding='utf-8') as json_file:
-                    project_data = json.load(json_file)
+                    if project_data:
+                        # Deserialize and load the project data
+                        self.deserialize_project_data(project_data)
 
-                # Deserialize and load the project data
-                self.deserialize_project_data(project_data)
+                        # Set current project name
+                        self.current_project_name = filepath.name
 
-                # Clear selection and update UI
-                self.selected_component = None
-                self.inspect_panel.show_default_state()
+                        # Clear undo stack and mark as saved
+                        self.undo_stack.clear()
+                        self.mark_as_saved()
 
-                self.log_panel.log_message(f"[INFO] Project loaded: {os.path.basename(file_name)}")
+                        # Clear selection and update UI
+                        self.selected_component = None
+                        self.inspect_panel.show_default_state()
 
-            except FileNotFoundError:
-                QMessageBox.critical(self, "Error", f"File not found: {file_name}")
-                self.log_panel.log_message(f"[ERROR] File not found: {file_name}")
-            except json.JSONDecodeError as e:
-                QMessageBox.critical(self, "Error", f"Invalid JSON file: {e}")
-                self.log_panel.log_message(f"[ERROR] Invalid project file: {e}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Error opening project: {e}")
-                self.log_panel.log_message(f"[ERROR] Error opening project: {e}")
+                        self.log_panel.log_message(f"[INFO] Project loaded: {self.current_project_name}")
+                    else:
+                        QMessageBox.critical(self, "Error", "Failed to load project file")
+                        self.log_panel.log_message(f"[ERROR] Failed to load project")
+
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Error opening project: {e}")
+                    self.log_panel.log_message(f"[ERROR] Error opening project: {e}")
 
     def on_save(self):
-        """Save the current project to a file"""
-        # Show file dialog to select a location to save the project
-        file_name, _ = QFileDialog.getSaveFileName(
+        """Save the current project to the default projects directory"""
+        # If no current project name, ask for one
+        if not self.current_project_name:
+            self.current_project_name = self._prompt_for_project_name()
+            if not self.current_project_name:
+                return  # User cancelled
+
+        # Check for file collision
+        filepath = self.project_manager.default_project_dir / self.current_project_name
+        if filepath.exists():
+            reply = QMessageBox.question(
+                self,
+                'File Already Exists',
+                f"A project named '{self.current_project_name}' already exists.\n\n"
+                f"Do you want to replace it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.No:
+                # Ask for a new name
+                self.current_project_name = self._prompt_for_project_name(self.current_project_name)
+                if not self.current_project_name:
+                    return  # User cancelled
+
+                # Recursively call on_save with the new name
+                return self.on_save()
+
+        try:
+            # Serialize the project data
+            project_data = self.serialize_project_data()
+
+            # Get grid rect for thumbnail
+            grid_rect = getattr(self.graphicsViewSandbox, 'visual_grid_rect', None)
+
+            # Save using project manager
+            success = self.project_manager.save_project(
+                project_data,
+                self.current_project_name,
+                self.scene,
+                grid_rect=grid_rect
+            )
+
+            if success:
+                self.mark_as_saved()
+                self.log_panel.log_message(f"[INFO] Project saved: {self.current_project_name}")
+            else:
+                QMessageBox.critical(self, "Error", "Failed to save project")
+                self.log_panel.log_message(f"[ERROR] Failed to save project")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error saving project: {e}")
+            self.log_panel.log_message(f"[ERROR] Error saving project: {e}")
+
+    def _prompt_for_project_name(self, default_name=None):
+        """Prompt user for a project name"""
+        from PyQt6.QtWidgets import QInputDialog
+
+        # Generate default name with auto-increment if not provided
+        if default_name is None:
+            default_name = self._get_next_project_name()
+
+        name, ok = QInputDialog.getText(
             self,
             "Save Project",
-            "ECis-project",
-            "ECis Project Files (*.ecis);;JSON Files (*.json);;All Files (*)"
+            "Enter project name:",
+            text=default_name
         )
 
-        if file_name:
-            try:
-                # Ensure proper file extension
-                if not file_name.endswith(('.ecis', '.json')):
-                    file_name += '.ecis'
+        if not ok or not name.strip():
+            return None
 
+        project_name = name.strip()
+        if not project_name.endswith('.ecis'):
+            project_name += '.ecis'
+
+        return project_name
+
+    def on_save_copy(self):
+        """Save a copy of the project to any location (for sharing)"""
+        # Show file dialog to select a location
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Copy",
+            os.path.expanduser("~/Downloads/ECis-project.ecis"),
+            "ECis Project Files (*.ecis);;All Files (*)"
+        )
+
+        if file_path:
+            try:
                 # Serialize the project data
                 project_data = self.serialize_project_data()
 
-                # Save to file
-                with open(file_name, 'w', encoding='utf-8') as json_file:
-                    json.dump(project_data, json_file, indent=2, ensure_ascii=False)
+                # Get grid rect for thumbnail
+                grid_rect = getattr(self.graphicsViewSandbox, 'visual_grid_rect', None)
 
-                self.log_panel.log_message(f"[INFO] Project saved as: {os.path.basename(file_name)}")
+                # Save copy using project manager
+                success = self.project_manager.save_project_copy(
+                    project_data,
+                    file_path,
+                    self.scene,
+                    grid_rect=grid_rect
+                )
 
-                # Show success message
-                QMessageBox.information(self, "Saved", f"Project successfully saved as:\n{os.path.basename(file_name)}")
+                if success:
+                    self.log_panel.log_message(f"[INFO] Copy saved to: {os.path.basename(file_path)}")
+                    QMessageBox.information(
+                        self,
+                        "Saved",
+                        f"Project copy successfully saved to:\n{os.path.basename(file_path)}"
+                    )
+                else:
+                    QMessageBox.critical(self, "Error", "Failed to save project copy")
+                    self.log_panel.log_message(f"[ERROR] Failed to save copy")
 
-            except PermissionError:
-                QMessageBox.critical(self, "Error", f"No permission to write to: {file_name}")
-                self.log_panel.log_message(f"[ERROR] No write permissions: {file_name}")
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Error saving project: {e}")
-                self.log_panel.log_message(f"[ERROR] Error saving project: {e}")
+                QMessageBox.critical(self, "Error", f"Error saving copy: {e}")
+                self.log_panel.log_message(f"[ERROR] Error saving copy: {e}")
 
     def on_run(self):
         self.log_panel.log_message("[INFO] Simulation started")
 
-        # Get all components from the scene
-        components = []
-        wires = []
+        # Build netlist for backend
+        netlist = self.netlist_builder.build_netlist(self.scene)
 
-        for item in self.scene.items():
-            if hasattr(item, 'component_type'):
-                components.append(item)
-            elif isinstance(item, Wire):  # Only count actual Wire objects
-                wires.append(item)
+        # Log any errors/warnings
+        if netlist['errors']:
+            for error in netlist['errors']:
+                if error.startswith('ERROR'):
+                    self.log_panel.log_message(f"[ERROR] {error}")
+                else:
+                    self.log_panel.log_message(f"[WARN] {error}")
 
-        # Simulate the circuit using the simulation engine
-        simulation_result = self.simulation_engine.simulate_circuit(components, wires)
+        # Format netlist for display
+        output_lines = ["=== Circuit Netlist ===", ""]
+        output_lines.append(f"Components: {netlist['metadata']['num_components']}")
+        output_lines.append(f"Nodes: {netlist['metadata']['num_nodes']}")
+        output_lines.append(f"Ground: {netlist['ground_node'] or 'Not defined'}")
+        output_lines.append("")
+
+        # List components
+        output_lines.append("Component List:")
+        for comp in netlist['components']:
+            nodes_str = ", ".join([f"{n['pin']}→{n['node']}" for n in comp['nodes']])
+            output_lines.append(f"  {comp['name']} ({comp['type']}): {comp['value'] or 'N/A'} | Nodes: [{nodes_str}]")
+
+        output_lines.append("")
+
+        # Add SPICE netlist
+        output_lines.append("=== SPICE Netlist ===")
+        spice_netlist = self.netlist_builder.export_spice_netlist(netlist)
+        output_lines.append(spice_netlist)
+
+        output_lines.append("")
+        output_lines.append("=== Simulation Output ===")
+        output_lines.append("(Placeholder - backend simulation engine to be connected)")
+        output_lines.append("")
+        output_lines.append("The netlist above can be passed to your backend simulation engine.")
+
+        simulation_result = "\n".join(output_lines)
+
         if self.sim_output_panel:
             self.sim_output_panel.set_output(simulation_result)
 
-        self.log_panel.log_message("[INFO] Simulation finished")
+        self.log_panel.log_message("[INFO] Netlist generated successfully")
 
     def on_stop(self):
         self.log_panel.log_message("[INFO] Simulation stopped")
@@ -696,6 +964,77 @@ class MainWindow(QMainWindow):
 
     def on_probe(self):
         self.log_panel.log_message("[INFO] Probe activated")
+
+    def on_copy(self):
+        """Copy selected components to clipboard"""
+        selected_items = self.scene.selectedItems()
+        components_data = []
+
+        for item in selected_items:
+            if hasattr(item, 'component_type'):
+                # Store component data
+                components_data.append({
+                    "type": item.component_type,
+                    "name": getattr(item, 'name', item.component_type),
+                    "value": getattr(item, 'value', ''),
+                    "orientation": getattr(item, 'orientation', 0),
+                    "size_w": getattr(item, 'size_w', 1),
+                    "size_h": getattr(item, 'size_h', 1),
+                    "relative_pos": {"x": item.x(), "y": item.y()}
+                })
+
+        if components_data:
+            self.clipboard_data = components_data
+            self.log_panel.log_message(f"[INFO] Copied {len(components_data)} component(s)")
+        else:
+            self.log_panel.log_message("[INFO] No components selected to copy")
+
+    def on_paste(self):
+        """Paste components from clipboard"""
+        if not self.clipboard_data:
+            self.log_panel.log_message("[INFO] Clipboard is empty")
+            return
+
+        # Calculate offset for pasted components (slight offset from originals)
+        offset_x = 40  # 1 grid cell
+        offset_y = 40
+
+        pasted_count = 0
+        for comp_data in self.clipboard_data:
+            try:
+                # Create new component
+                component = ComponentItem(
+                    comp_data["type"],
+                    comp_data["size_w"],
+                    comp_data["size_h"],
+                    self.graphicsViewSandbox.grid_spacing
+                )
+
+                # Set properties
+                component.name = comp_data["name"] + "_copy"
+                component.value = comp_data["value"]
+                component.orientation = comp_data["orientation"]
+
+                # Set position with offset
+                new_x = comp_data["relative_pos"]["x"] + offset_x
+                new_y = comp_data["relative_pos"]["y"] + offset_y
+                component.setPos(new_x, new_y)
+
+                # Apply rotation
+                if component.orientation:
+                    component.rotate_component(0)  # Triggers recreation with orientation
+
+                # Add to scene
+                self.scene.addItem(component)
+                component.snap_to_grid()
+
+                pasted_count += 1
+
+            except Exception as e:
+                self.log_panel.log_message(f"[ERROR] Failed to paste component: {e}")
+
+        if pasted_count > 0:
+            self.log_panel.log_message(f"[INFO] Pasted {pasted_count} component(s)")
 
     def on_copy_output_clicked(self):
         """Copy simulation output to clipboard"""
@@ -731,6 +1070,62 @@ class MainWindow(QMainWindow):
     def on_clear_log(self):
         """Clear the log"""
         self.log_panel.clear_log()
+
+    def on_export_png(self):
+        """Export circuit canvas as PNG image"""
+        from PyQt6.QtGui import QImage, QPainter
+        from PyQt6.QtCore import QRectF
+
+        # Ask user for save location
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export as PNG",
+            os.path.expanduser("~/Downloads/circuit.png"),
+            "PNG Images (*.png);;All Files (*)"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            # Ensure .png extension
+            if not file_path.endswith('.png'):
+                file_path += '.png'
+
+            # Get scene bounds
+            scene_rect = self.scene.sceneRect()
+
+            # Create high-resolution image (2x for quality)
+            scale_factor = 2.0
+            img_width = int(scene_rect.width() * scale_factor)
+            img_height = int(scene_rect.height() * scale_factor)
+
+            image = QImage(img_width, img_height, QImage.Format.Format_ARGB32)
+            image.fill(Qt.GlobalColor.white)
+
+            # Render scene to image
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+            # Let Qt handle the scaling by specifying target and source rectangles
+            target_rect = QRectF(0, 0, img_width, img_height)
+            self.scene.render(painter, target_rect, scene_rect)
+            painter.end()
+
+            # Save to file
+            image.save(file_path, "PNG")
+
+            self.log_panel.log_message(f"[INFO] Circuit exported to: {os.path.basename(file_path)}")
+            QMessageBox.information(
+                self,
+                "Exported",
+                f"Circuit successfully exported to:\n{os.path.basename(file_path)}"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error exporting PNG: {e}")
+            self.log_panel.log_message(f"[ERROR] Error exporting PNG: {e}")
 
     def on_inspect_field_changed(self):
         """Handle changes in inspect panel fields"""
@@ -801,14 +1196,27 @@ class MainWindow(QMainWindow):
             a.highlight(False)
             b.highlight(False)
             if hasattr(self, 'log_panel'):
-                self.log_panel.log_message("[WARN] Invalid connection: out -> out is not allowed")
+                # Determine specific error message
+                pid_a = getattr(a, 'point_id', '')
+                pid_b = getattr(b, 'point_id', '')
+                parent_a = getattr(a, 'parent_component', None)
+                parent_b = getattr(b, 'parent_component', None)
+
+                if parent_a is not None and parent_b is not None and parent_a is parent_b:
+                    self.log_panel.log_message("[WARN] Invalid connection: cannot connect a component to itself")
+                elif pid_a == 'out' and pid_b == 'out':
+                    self.log_panel.log_message("[WARN] Invalid connection: out -> out is not allowed")
+                else:
+                    self.log_panel.log_message("[WARN] Invalid connection")
             del self.first_selected_point
             del self.last_selected_point
             return
 
-        # Create wire if valid
+        # Create wire if valid (use undo command)
         wire = Wire(a, b)
-        self.scene.addItem(wire)
+        command = AddWireCommand(self.scene, wire, a, b, f"Connect Wire")
+        self.undo_stack.push(command)
+
         a.highlight(False)
         b.highlight(False)
         if hasattr(self, 'log_panel'):
@@ -830,7 +1238,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'first_selected_point'):
             if self.first_selected_point != junction_point:
                 wire = Wire(self.first_selected_point, junction_point)
-                self.scene.addItem(wire)
+                command = AddWireCommand(self.scene, wire, self.first_selected_point, junction_point, "Connect Wire")
+                self.undo_stack.push(command)
 
                 self.first_selected_point.highlight(False)
                 junction_point.highlight(False)
@@ -927,40 +1336,42 @@ class MainWindow(QMainWindow):
             self.log_panel.log_message(f"[WARN] Position {component.get_display_grid_position()} already occupied")
 
     def delete_selected_components(self):
-        """Delete selected components from the scene"""
+        """Delete selected components from the scene (with undo support)"""
         from components.connection_points import ConnectionPoint
         selected_items = self.scene.selectedItems()
-        if selected_items:
-            removed_count = 0
-            for item in selected_items:
-                # Skip direct deletion of raw connection points (they are owned by components)
-                if isinstance(item, ConnectionPoint):
-                    continue
-                # If it's a junction point, remove its connected wires first using proper cleanup
-                if isinstance(item, JunctionPoint):
-                    try:
-                        for wire in list(getattr(item, 'connected_wires', [])):
-                            if hasattr(wire, 'delete_wire'):
-                                wire.delete_wire()
-                            elif wire.scene():
-                                self.scene.removeItem(wire)
-                    except Exception:
-                        pass
-                # Remove wires connected to components
-                if hasattr(item, 'connection_points'):
-                    for cp in item.connection_points:
-                        if hasattr(cp, 'connected_wires'):
-                            for wire in cp.connected_wires.copy():
-                                if hasattr(wire, 'delete_wire'):
-                                    wire.delete_wire()
-                                elif wire.scene():
-                                    self.scene.removeItem(wire)
-                # Finally remove the item itself (component, wire segment group, or junction)
-                self.scene.removeItem(item)
-                removed_count += 1
+        if not selected_items:
+            return
+
+        # Collect items and their connected wires for undo
+        items_data = []
+
+        for item in selected_items:
+            # Skip direct deletion of raw connection points (they are owned by components)
+            if isinstance(item, ConnectionPoint):
+                continue
+
+            connected_wires = []
+
+            # Collect connected wires for junction points
+            if isinstance(item, JunctionPoint):
+                connected_wires = list(getattr(item, 'connected_wires', []))
+
+            # Collect connected wires for components
+            elif hasattr(item, 'connection_points'):
+                for cp in item.connection_points:
+                    if hasattr(cp, 'connected_wires'):
+                        connected_wires.extend(cp.connected_wires.copy())
+
+            items_data.append((item, connected_wires))
+
+        if items_data:
+            # Create and execute multi-delete command
+            command = MultiDeleteCommand(self.scene, items_data, f"Delete {len(items_data)} item(s)")
+            self.undo_stack.push(command)
+
             self.selected_component = None
             self.inspect_panel.show_default_state()
-            self.log_panel.log_message(f"[INFO] {removed_count} item(s) removed (excluding protected connection points)")
+            self.log_panel.log_message(f"[INFO] {len(items_data)} item(s) deleted")
 
     def refresh_all_component_connection_points(self):
         """Rebuild connection points for all components to adopt latest positioning logic."""
@@ -989,16 +1400,61 @@ class MainWindow(QMainWindow):
 
     def is_connection_allowed(self, point_a, point_b):
         """Return True if a wire may connect the two points.
-        Current rule: disallow out->out. Future rules can be added here."""
+        Rules:
+        - Disallow out->out connections
+        - Disallow connections within the same component
+        """
         pid_a = getattr(point_a, 'point_id', '')
         pid_b = getattr(point_b, 'point_id', '')
+
         # Block out-out in either order
         if pid_a == 'out' and pid_b == 'out':
             return False
+
+        # Block connections to the same component
+        parent_a = getattr(point_a, 'parent_component', None)
+        parent_b = getattr(point_b, 'parent_component', None)
+
+        if parent_a is not None and parent_b is not None and parent_a is parent_b:
+            return False
+
         return True
 
     def closeEvent(self, event):
-        """Persist splitter layout on close and pass event to base class."""
+        """Handle close event - prompt to save if there are unsaved changes"""
+        # Check for unsaved changes
+        if self.has_unsaved_changes:
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle('Unsaved Changes')
+            msg_box.setText('Do you want to save your changes before closing?')
+            msg_box.setIcon(QMessageBox.Icon.Question)
+
+            # Add custom buttons
+            save_btn = msg_box.addButton('Save', QMessageBox.ButtonRole.AcceptRole)
+            dont_save_btn = msg_box.addButton("Don't Save", QMessageBox.ButtonRole.DestructiveRole)
+            cancel_btn = msg_box.addButton('Cancel', QMessageBox.ButtonRole.RejectRole)
+
+            msg_box.setDefaultButton(save_btn)
+            msg_box.exec()
+
+            clicked_button = msg_box.clickedButton()
+
+            if clicked_button == save_btn:
+                # Save the project
+                self.on_save()
+
+                # Check if save was successful (user might have cancelled)
+                if self.has_unsaved_changes:
+                    # Save failed or was cancelled, don't close
+                    event.ignore()
+                    return
+            elif clicked_button == cancel_btn:
+                # User cancelled, don't close
+                event.ignore()
+                return
+            # If Don't Save, continue with closing
+
+        # Persist splitter layout on close
         try:
             settings = QSettings("ECis", "CircuitDesigner")
             if hasattr(self, 'right_splitter') and self.right_splitter is not None:
@@ -1006,7 +1462,8 @@ class MainWindow(QMainWindow):
                 settings.setValue("right_splitter_sizes", _json.dumps(self.right_splitter.sizes()))
         except Exception:
             pass
-        super().closeEvent(event)
+
+        event.accept()
 
 
 if __name__ == '__main__':
