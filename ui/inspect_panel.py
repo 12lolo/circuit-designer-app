@@ -3,6 +3,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit, QPushButton, QSizePolicy, QFrame
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF
+from ui.value_input_widget import ValueInputWidget
 
 
 class InspectPanel(QGroupBox):
@@ -51,13 +52,13 @@ class InspectPanel(QGroupBox):
 
         # Prevent vertical expansion of row widgets
         fixed_h = 20
-        for w in self.findChildren((QLabel, QLineEdit, QComboBox, QPushButton)):
+        for w in self.findChildren((QLabel, QLineEdit, QComboBox, QPushButton, ValueInputWidget)):
             w.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             w.setMinimumHeight(fixed_h)
             w.setMaximumHeight(fixed_h)
 
         # Value labels fixed-height as well (prevents tall rows)
-        for name in ("labelTypeValue", "labelPositionValue",
+        for name in ("labelTypeValue", "labelPositionValue", "labelNetIdValue",
                      "labelWireLengthValue", "labelBendPointsValue",
                      "labelWireEndpointsValue"):
             if hasattr(self, name):
@@ -131,34 +132,39 @@ class InspectPanel(QGroupBox):
         self.labelPositionValue = QLabel("--")
         self.formLayout_inspect.addRow(self.labelPosition, self.labelPositionValue)
 
-        # Net ID
+        # Net ID (read-only)
         self.labelNetId = QLabel("Net ID")
-        self.editNetId = QLineEdit()
-        self.editNetId.setPlaceholderText("Network identifier")
-        self.editNetId.textChanged.connect(self.field_changed.emit)
-        self.formLayout_inspect.addRow(self.labelNetId, self.editNetId)
+        self.labelNetIdValue = QLabel("--")
+        self.labelNetIdValue.setStyleSheet("font-family: monospace; color: #0066cc;")
+        self.labelNetIdValue.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.formLayout_inspect.addRow(self.labelNetId, self.labelNetIdValue)
 
     def createComponentSpecificFields(self):
         # Resistance
         self.labelResistance = QLabel("Resistance")
-        self.editResistance = QLineEdit()
-        self.editResistance.setPlaceholderText("e.g., 1kΩ, 470Ω")
+        self.editResistance = ValueInputWidget(unit="Ω")
+        self.editResistance.setPlaceholderText("e.g., 1Ω, 470Ω, 1000Ω")
         self.editResistance.textChanged.connect(self.field_changed.emit)
         self.formLayout_inspect.addRow(self.labelResistance, self.editResistance)
 
         # Voltage
         self.labelVoltage = QLabel("Voltage")
-        self.editVoltage = QLineEdit()
+        self.editVoltage = ValueInputWidget(unit="V")
         self.editVoltage.setPlaceholderText("e.g., 5V, 12V")
         self.editVoltage.textChanged.connect(self.field_changed.emit)
         self.formLayout_inspect.addRow(self.labelVoltage, self.editVoltage)
 
-        # Current
-        self.labelCurrent = QLabel("Current")
-        self.editCurrent = QLineEdit()
-        self.editCurrent.setPlaceholderText("e.g., 1mA, 100mA")
-        self.editCurrent.textChanged.connect(self.field_changed.emit)
-        self.formLayout_inspect.addRow(self.labelCurrent, self.editCurrent)
+        # Switch State
+        self.labelSwitchState = QLabel("State")
+        self.comboSwitchState = QComboBox()
+        self.comboSwitchState.addItems(["Open", "Closed"])
+        self.comboSwitchState.currentTextChanged.connect(self.field_changed.emit)
+        self.formLayout_inspect.addRow(self.labelSwitchState, self.comboSwitchState)
+
+        # Light State
+        self.labelLightState = QLabel("State")
+        self.labelLightStateValue = QLabel("--")
+        self.formLayout_inspect.addRow(self.labelLightState, self.labelLightStateValue)
 
         # Orientation
         self.labelOrient = QLabel("Orientation")
@@ -188,9 +194,10 @@ class InspectPanel(QGroupBox):
             widgets_to_hide = [
                 'labelName', 'editName', 'labelType', 'labelTypeValue',
                 'labelPosition', 'labelPositionValue', 'labelResistance', 'editResistance',
-                'labelVoltage', 'editVoltage', 'labelCurrent', 'editCurrent',
+                'labelVoltage', 'editVoltage', 'labelSwitchState', 'comboSwitchState',
+                'labelLightState', 'labelLightStateValue',
                 'labelOrient', 'comboOrient', 'labelWireLength', 'labelWireLengthValue',
-                'labelBendPoints', 'labelBendPointsValue', 'labelNetId', 'editNetId',
+                'labelBendPoints', 'labelBendPointsValue', 'labelNetId', 'labelNetIdValue',
                 'labelWireEndpoints', 'labelWireEndpointsValue'
             ]
             for widget_name in widgets_to_hide:
@@ -212,7 +219,8 @@ class InspectPanel(QGroupBox):
             fields_to_hide = [
                 ('labelResistance', 'editResistance'),
                 ('labelVoltage', 'editVoltage'),
-                ('labelCurrent', 'editCurrent'),
+                ('labelSwitchState', 'comboSwitchState'),
+                ('labelLightState', 'labelLightStateValue'),
                 ('labelOrient', 'comboOrient'),
                 ('labelWireLength', 'labelWireLengthValue'),
                 ('labelBendPoints', 'labelBendPointsValue'),
@@ -223,19 +231,19 @@ class InspectPanel(QGroupBox):
                 if hasattr(self, widget_name): getattr(self, widget_name).hide()
 
             # Show by type
-            if component_type == "Weerstand":
+            if component_type in ["Weerstand", "Resistor"]:
                 self.labelResistance.show(); self.editResistance.show()
                 self.labelOrient.show(); self.comboOrient.show()
             elif component_type in ["Spannings Bron", "Vdc"]:
                 self.labelVoltage.show(); self.editVoltage.show()
-                if component_type == "Spannings Bron":
-                    self.labelOrient.show(); self.comboOrient.show()
-            elif component_type == "Isrc":
-                self.labelCurrent.show(); self.editCurrent.show()
+            elif component_type == "Switch":
+                self.labelSwitchState.show(); self.comboSwitchState.show()
                 self.labelOrient.show(); self.comboOrient.show()
+            elif component_type == "Light":
+                self.labelLightState.show(); self.labelLightStateValue.show()
 
             # Net ID always
-            self.labelNetId.show(); self.editNetId.show()
+            self.labelNetId.show(); self.labelNetIdValue.show()
 
         except Exception as e:
             print(f"Error in show_component_fields: {e}")
@@ -248,7 +256,8 @@ class InspectPanel(QGroupBox):
             component_fields = [
                 'labelName', 'editName', 'labelPosition', 'labelPositionValue',
                 'labelResistance', 'editResistance', 'labelVoltage', 'editVoltage',
-                'labelCurrent', 'editCurrent', 'labelOrient', 'comboOrient'
+                'labelSwitchState', 'comboSwitchState', 'labelLightState', 'labelLightStateValue',
+                'labelOrient', 'comboOrient'
             ]
             for field_name in component_fields:
                 if hasattr(self, field_name):
@@ -260,7 +269,7 @@ class InspectPanel(QGroupBox):
                 ('labelWireLength', 'labelWireLengthValue'),
                 ('labelBendPoints', 'labelBendPointsValue'),
                 ('labelWireEndpoints', 'labelWireEndpointsValue'),
-                ('labelNetId', 'editNetId')
+                ('labelNetId', 'labelNetIdValue')
             ]
             for label_name, widget_name in wire_fields:
                 if hasattr(self, label_name): getattr(self, label_name).show()
@@ -287,6 +296,12 @@ class InspectPanel(QGroupBox):
                 pos = component.pos()
                 self.labelPositionValue.setText(f"({pos.x():.0f}, {pos.y():.0f})")
 
+            # Net ID - generate backend identifier
+            # This matches the format used in backend_integration.py
+            component_type = component.component_type
+            net_id = f"{component_type}_{id(component) % 10000}"  # Simple unique ID
+            self.labelNetIdValue.setText(net_id)
+
             # Common values
             if hasattr(component, 'name'):
                 old_block = self.editName.blockSignals(True)
@@ -308,19 +323,27 @@ class InspectPanel(QGroupBox):
                     old_block = self.editResistance.blockSignals(True)
                     self.editResistance.setText(value)
                     self.editResistance.blockSignals(old_block)
-                elif component.component_type in ["Voltage Source", "Vdc"]:
+                elif component.component_type == "Vdc":
                     old_block = self.editVoltage.blockSignals(True)
                     self.editVoltage.setText(value)
                     self.editVoltage.blockSignals(old_block)
-                elif component.component_type == "Current Source":
-                    old_block = self.editCurrent.blockSignals(True)
-                    self.editCurrent.setText(value)
-                    self.editCurrent.blockSignals(old_block)
+                elif component.component_type == "Switch":
+                    old_block = self.comboSwitchState.blockSignals(True)
+                    index = self.comboSwitchState.findText(value)
+                    if index >= 0:
+                        self.comboSwitchState.setCurrentIndex(index)
+                    self.comboSwitchState.blockSignals(old_block)
+                elif component.component_type == "Light":
+                    self.labelLightStateValue.setText(value)
 
     def update_wire_data(self, wire):
         """Update the panel with wire data, including endpoint grid coordinates"""
         self.show_wire_fields()
         self.labelTypeValue.setText("Wire")
+
+        # Net ID - generate backend identifier for wire
+        wire_id = f"wire_{id(wire) % 10000}"  # Simple unique ID
+        self.labelNetIdValue.setText(wire_id)
 
         # Length
         if hasattr(wire, 'line'):

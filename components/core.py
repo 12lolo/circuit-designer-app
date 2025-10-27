@@ -54,36 +54,72 @@ class CircuitGridTransformer:
     def remove_wires_and_restructure(self):
         """
         Remove wire components and directly connect the components they were connecting.
-        
+
         Returns:
             Simplified circuit circuit grid without wire components
         """
-        for wire_name, wire_data in self.circuit_grid.items():
+        # Normalize all coordinates to tuples for consistent comparison
+        for name, data in self.circuit_grid.items():
+            if isinstance(data['coordinate'], list):
+                data['coordinate'] = tuple(data['coordinate'])
+            data['connections'] = [tuple(c) if isinstance(c, list) else c for c in data['connections']]
+
+        # First pass: replace all wire coordinates in component connections with component coordinates
+        for wire_name, wire_data in list(self.circuit_grid.items()):
             if wire_data['type'] != 'wire':
                 continue
 
-            wire_connections = self._get_component_connections(wire_name)
+            wire_coordinate = tuple(wire_data['coordinate']) if isinstance(wire_data['coordinate'], list) else wire_data['coordinate']
+            wire_connections = [tuple(c) if isinstance(c, list) else c for c in wire_data['connections']]
 
-            if len(wire_connections) < 2:
-                continue
-
-            # Update components connected to this wire
-            for _, component_data in self.circuit_grid.items():
-                if component_data['coordinate'] not in wire_connections:
+            # Update all components that connect to this wire
+            for component_name, component_data in self.circuit_grid.items():
+                if component_data['type'] == 'wire':
                     continue
 
-                # Replace wire connection with direct connection to other end
-                for coordinate in wire_connections:
-                    if coordinate != component_data['coordinate']:
-                        wire_coordinate_index = component_data['connections'].index(wire_data['coordinate'])
-                        component_data['connections'][wire_coordinate_index] = coordinate
+                comp_coord = tuple(component_data['coordinate']) if isinstance(component_data['coordinate'], list) else component_data['coordinate']
 
+                # Check if this component connects to this wire
+                if wire_coordinate not in component_data['connections']:
+                    continue
+
+                # Find the other components this wire connects to (excluding this component)
+                other_components = [coord for coord in wire_connections if coord != comp_coord]
+
+                # Replace the wire coordinate with direct connections to other components
+                new_connections = []
+                for conn in component_data['connections']:
+                    conn = tuple(conn) if isinstance(conn, list) else conn
+                    if conn == wire_coordinate:
+                        # Replace wire connection with connections to other components
+                        new_connections.extend(other_components)
+                    else:
+                        new_connections.append(conn)
+
+                component_data['connections'] = new_connections
+
+        # Second pass: remove wires from circuit grid
         self.circuit_grid = {name: data for name, data in self.circuit_grid.items() if data['type'] != 'wire'}
 
-        # Remove all invalid connections
+        # Third pass: ensure bidirectional connections (if A connects to B, B must connect to A)
+        for component_name, component_data in self.circuit_grid.items():
+            comp_coord = tuple(component_data['coordinate']) if isinstance(component_data['coordinate'], list) else component_data['coordinate']
+            for connection_coord in component_data['connections']:
+                connection_coord = tuple(connection_coord) if isinstance(connection_coord, list) else connection_coord
+                # Find the component at connection_coord
+                for other_name, other_data in self.circuit_grid.items():
+                    other_coord = tuple(other_data['coordinate']) if isinstance(other_data['coordinate'], list) else other_data['coordinate']
+                    if other_coord == connection_coord:
+                        # Ensure bidirectional connection
+                        if comp_coord not in other_data['connections']:
+                            other_data['connections'].append(comp_coord)
+                        break
+
+        # Fourth pass: validate mutual connections and remove duplicates
         for component_name, component_data in self.circuit_grid.items():
             valid_connections = self._get_component_connections(component_name)
-            component_data['connections'] = valid_connections
+            # Remove duplicates while preserving order
+            component_data['connections'] = list(dict.fromkeys(valid_connections))
 
         self._name_connections()
 
@@ -125,9 +161,24 @@ class CircuitGridTransformer:
                         if self.circuit_grid[connection]['type'] != 'ground':
                             continue
                         circuit.R(f'supporting_resistor{supporting_resistors}', component_name, circuit.gnd, 0@u_Ohm)
+                        supporting_resistors += 1  # Increment counter to avoid duplicate names
                     continue
                 case _:
                     continue
+
+            # Special handling for voltage sources with only 1 connection
+            if component_data['type'] == 'voltage_source' and len(component_data['connections']) == 1:
+                # Use the single connection as positive terminal and ground as negative
+                positive_node = self._create_single_node_name(component_name, component_data['connections'][0], circuit)
+                negative_node = circuit.gnd
+
+                component_function(
+                    component_name,
+                    positive_node,
+                    negative_node,
+                    unit
+                )
+                continue
 
             if len(component_data['connections']) != 2:
                 continue
@@ -143,15 +194,37 @@ class CircuitGridTransformer:
 
         return circuit
 
+    def _create_single_node_name(self, component_name, connection, circuit):
+        """
+        Generate a single node name for a component with only one connection.
+
+        Args:
+            component_name: Name of the component
+            connection: Single connection name
+            circuit: PySpice Circuit object
+
+        Returns:
+            Node name string or circuit.gnd
+        """
+        connected_component = self.circuit_grid[connection]
+
+        if connected_component['type'] == 'ground':
+            return circuit.gnd
+        elif connected_component['type'] == 'splitwire':
+            return connection
+        else:
+            node_components = sorted([component_name, connection])
+            return f'{node_components[0]}/{node_components[1]}'
+
     def _create_node_names(self, component_name, component_data, circuit):
         """
         Generate node names for component connections in PySpice circuit.
-    
+
         Args:
             component_name: Name of the component
             component_data: Component data with 'connections' and 'type'
             circuit: PySpice Circuit object
-            
+
         Returns:
             dict: {'positive': node_name, 'negative': node_name} for connections
         """
@@ -177,9 +250,17 @@ def format_output(analysis):
     """Format the output results of the simulation in a dictionary."""
     simulation_results_dict = {}
 
-    for node in analysis.nodes.values():
-        data_label = f"{node}"
-        simulation_results_dict[data_label] = np.array(node)
+    for node_name, node_value in analysis.nodes.items():
+        data_label = str(node_name)
+        # Convert the node value to a numpy array with proper value extraction
+        # PySpice returns node values that can be directly converted to float
+        try:
+            # For operating point analysis, node_value is already the voltage value
+            voltage_value = float(node_value)
+            simulation_results_dict[data_label] = np.array([voltage_value])
+        except (TypeError, ValueError):
+            # Fallback: try to extract from array-like object
+            simulation_results_dict[data_label] = np.array([float(node_value[0])]) if hasattr(node_value, '__getitem__') else np.array([0.0])
 
     return simulation_results_dict
 

@@ -46,7 +46,7 @@ class ComponentItem(QGraphicsRectItem):
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemSendsGeometryChanges)
 
         # Define component categories
-        self.single_connection_types = {"Vdc", "GND"}
+        self.single_connection_types = {"Vdc", "GND", "Light"}
 
         # Initialize transform origin to anchor point
         self.update_transform_origin()
@@ -58,13 +58,13 @@ class ComponentItem(QGraphicsRectItem):
     def get_default_value(self):
         """Get default value based on component type"""
         if self.component_type == "Resistor":
-            return "1kΩ"
+            return "1Ω"
         elif self.component_type == "Vdc":
             return "5V"
-        elif self.component_type == "Voltage Source":
-            return "12V"
-        elif self.component_type == "Current Source":
-            return "1mA"
+        elif self.component_type == "Switch":
+            return "Open"
+        elif self.component_type == "Light":
+            return "Off"
         elif self.component_type == "GND":
             return "0V"
         return ""
@@ -253,10 +253,8 @@ class ComponentItem(QGraphicsRectItem):
     def create_connection_points(self):
         """Create connection points positioned so they land on grid junctions.
         Rules:
-        - Resistor (2x1 cells): horizontal orientations (0/180) place both terminals at y=0 to align with a single grid row.
+        - Resistor/Switch (2x1 cells): horizontal orientations (0/180) place both terminals at y=0 to align with a single grid row.
           Vertical orientations (90/270) already have mid_x = width/2 = grid multiple (since width=2*g) so remain.
-        - Sources (1x2 cells): vertical orientations (0/180) place both terminals at x=0 to align with a single grid column.
-          Horizontal orientations (90/270) already have mid_y = height/2 = grid multiple (since height=2*g).
         - Single-terminal components (1x1) remain at (0,0).
         """
         rect = self.rect()
@@ -265,7 +263,7 @@ class ComponentItem(QGraphicsRectItem):
         mid_x = width / 2.0
         mid_y = height / 2.0
         self.connection_points = []
-        if self.component_type == "Resistor":
+        if self.component_type in ["Resistor", "Switch"]:
             if self.orientation == 0:      # Horizontal (anchor at left, y=0 grid row)
                 left_point = ConnectionPoint(self, 0, 0, "in")
                 right_point = ConnectionPoint(self, width, 0, "out")
@@ -282,21 +280,7 @@ class ComponentItem(QGraphicsRectItem):
                 top_point = ConnectionPoint(self, mid_x, height, "in")
                 bottom_point = ConnectionPoint(self, mid_x, 0, "out")
                 self.connection_points.extend([top_point, bottom_point])
-        elif self.component_type in ["Voltage Source", "Current Source"]:
-            if self.orientation == 0:      # Vertical (anchor at top, x=0 column)
-                top_point = ConnectionPoint(self, 0, 0, "pos")
-                bottom_point = ConnectionPoint(self, 0, height, "neg")
-            elif self.orientation == 90:   # Horizontal
-                top_point = ConnectionPoint(self, 0, mid_y, "pos")
-                bottom_point = ConnectionPoint(self, width, mid_y, "neg")
-            elif self.orientation == 180:  # Vertical flipped
-                top_point = ConnectionPoint(self, 0, height, "pos")
-                bottom_point = ConnectionPoint(self, 0, 0, "neg")
-            else:  # 270 Horizontal flipped
-                top_point = ConnectionPoint(self, width, mid_y, "pos")
-                bottom_point = ConnectionPoint(self, 0, mid_y, "neg")
-            self.connection_points.extend([top_point, bottom_point])
-        elif self.component_type in ["Vdc", "GND"]:
+        elif self.component_type in ["Vdc", "GND", "Light"]:
             terminal = ConnectionPoint(self, 0, 0, "terminal")
             self.connection_points.append(terminal)
 
@@ -394,10 +378,10 @@ class ComponentItem(QGraphicsRectItem):
             return self.create_vdc_icon(width, height)
         elif self.component_type == "GND":
             return self.create_ground_icon(width, height)
-        elif self.component_type == "Voltage Source":
-            return self.create_voltage_source_icon(width, height)
-        elif self.component_type == "Current Source":
-            return self.create_current_source_icon(width, height)
+        elif self.component_type == "Switch":
+            return self.create_switch_icon(width, height)
+        elif self.component_type == "Light":
+            return self.create_light_icon(width, height)
         return None
 
     def create_resistor_icon(self, width, height):
@@ -534,8 +518,45 @@ class ComponentItem(QGraphicsRectItem):
         icon_item.setPos(0, 0)
         return icon_item
 
-    def create_current_source_icon(self, width, height):
-        """Create a current source icon (circle with arrow)"""
+    def create_switch_icon(self, width, height):
+        """Create a switch icon (line with a break/gap)"""
+        pixmap = QPixmap(int(width), int(height))
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(0, 0, 0), 2)
+        painter.setPen(pen)
+
+        center_y = height / 2
+        gap_size = width / 8
+        switch_length = width / 3
+
+        # Draw left terminal line
+        painter.drawLine(QPointF(0, center_y),
+                        QPointF(width/2 - gap_size, center_y))
+
+        # Draw switch lever (angled line for open switch)
+        lever_start = QPointF(width/2 - gap_size, center_y)
+        lever_end = QPointF(width/2 + gap_size, center_y - height/4)
+        painter.drawLine(lever_start, lever_end)
+
+        # Draw small circle at lever pivot
+        painter.setBrush(QBrush(QColor(0, 0, 0)))
+        painter.drawEllipse(lever_start, 2, 2)
+
+        # Draw right terminal line
+        painter.drawLine(QPointF(width/2 + gap_size, center_y),
+                        QPointF(width, center_y))
+
+        painter.end()
+
+        icon_item = QGraphicsPixmapItem(pixmap)
+        icon_item.setPos(0, 0)
+        return icon_item
+
+    def create_light_icon(self, width, height):
+        """Create a light bulb icon (circle with filament and rays)"""
         pixmap = QPixmap(int(width), int(height))
         pixmap.fill(Qt.GlobalColor.transparent)
 
@@ -547,23 +568,35 @@ class ComponentItem(QGraphicsRectItem):
         center_x = width / 2
         center_y = height / 2
 
-        # Draw circle
+        # Draw circle (bulb)
         radius = min(width, height) / 3
         painter.drawEllipse(QPointF(center_x, center_y), radius, radius)
 
-        # Draw arrow pointing up
-        arrow_height = radius * 1.2
-        arrow_width = radius / 3
+        # Draw filament (X inside)
+        filament_size = radius / 2
+        painter.drawLine(QPointF(center_x - filament_size, center_y - filament_size),
+                        QPointF(center_x + filament_size, center_y + filament_size))
+        painter.drawLine(QPointF(center_x + filament_size, center_y - filament_size),
+                        QPointF(center_x - filament_size, center_y + filament_size))
 
-        # Arrow shaft
-        painter.drawLine(QPointF(center_x, center_y + arrow_height/2),
-                        QPointF(center_x, center_y - arrow_height/2))
+        # Draw light rays (4 small lines around the circle)
+        ray_length = radius / 3
+        ray_distance = radius + 2
+        pen.setWidth(1)
+        painter.setPen(pen)
 
-        # Arrow head
-        painter.drawLine(QPointF(center_x, center_y - arrow_height/2),
-                        QPointF(center_x - arrow_width, center_y - arrow_height/2 + arrow_width))
-        painter.drawLine(QPointF(center_x, center_y - arrow_height/2),
-                        QPointF(center_x + arrow_width, center_y - arrow_height/2 + arrow_width))
+        # Top ray
+        painter.drawLine(QPointF(center_x, center_y - ray_distance),
+                        QPointF(center_x, center_y - ray_distance - ray_length))
+        # Bottom ray
+        painter.drawLine(QPointF(center_x, center_y + ray_distance),
+                        QPointF(center_x, center_y + ray_distance + ray_length))
+        # Left ray
+        painter.drawLine(QPointF(center_x - ray_distance, center_y),
+                        QPointF(center_x - ray_distance - ray_length, center_y))
+        # Right ray
+        painter.drawLine(QPointF(center_x + ray_distance, center_y),
+                        QPointF(center_x + ray_distance + ray_length, center_y))
 
         painter.end()
 

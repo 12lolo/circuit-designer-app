@@ -30,6 +30,7 @@ from ui.undo_commands import (
     RotateComponentCommand, AddWireCommand, DeleteWireCommand, MultiDeleteCommand
 )
 from ui.quick_access_toolbar import make_menu_pinnable
+from ui.backend_integration import BackendSimulator
 
 
 class MainWindow(QMainWindow):
@@ -61,6 +62,9 @@ class MainWindow(QMainWindow):
 
         # Netlist builder for backend integration
         self.netlist_builder = NetlistBuilder()
+
+        # Backend simulator for PySpice integration
+        self.backend_simulator = BackendSimulator()
 
         # Clipboard for copy/paste
         self.clipboard_data = None
@@ -353,6 +357,7 @@ class MainWindow(QMainWindow):
         # Connect inspect and output panel signals
         self.inspect_panel.field_changed.connect(self.on_inspect_field_changed)
         self.sim_output_panel.copy_output_requested.connect(self.on_copy_output_clicked)
+        self.sim_output_panel.node_clicked.connect(self.on_node_clicked)
 
     def setupLogSection(self):
         """Setup the Log section (placed in vertical splitter for resizable height)"""
@@ -895,49 +900,110 @@ class MainWindow(QMainWindow):
     def on_run(self):
         self.log_panel.log_message("[INFO] Simulation started")
 
-        # Build netlist for backend
-        netlist = self.netlist_builder.build_netlist(self.scene)
+        # Run backend simulation
+        try:
+            grid_spacing = self.graphicsViewSandbox.grid_spacing
+            result = self.backend_simulator.run_simulation(self.scene, grid_spacing)
 
-        # Log any errors/warnings
-        if netlist['errors']:
-            for error in netlist['errors']:
-                if error.startswith('ERROR'):
-                    self.log_panel.log_message(f"[ERROR] {error}")
-                else:
-                    self.log_panel.log_message(f"[WARN] {error}")
+            output_lines = ["=== PySpice Simulation Results ===", ""]
 
-        # Format netlist for display
-        output_lines = ["=== Circuit Netlist ===", ""]
-        output_lines.append(f"Components: {netlist['metadata']['num_components']}")
-        output_lines.append(f"Nodes: {netlist['metadata']['num_nodes']}")
-        output_lines.append(f"Ground: {netlist['ground_node'] or 'Not defined'}")
-        output_lines.append("")
+            if result['success']:
+                # Display results using HTML formatting for clickable node names
+                html_lines = ["<pre style='font-family: monospace; font-size: 12px;'>"]
+                html_lines.append("=== PySpice Simulation Results ===\n")
+                html_lines.append("Simulation completed successfully!\n")
+                html_lines.append("\n=== Node Voltages ===")
 
-        # List components
-        output_lines.append("Component List:")
-        for comp in netlist['components']:
-            nodes_str = ", ".join([f"{n['pin']}→{n['node']}" for n in comp['nodes']])
-            output_lines.append(f"  {comp['name']} ({comp['type']}): {comp['value'] or 'N/A'} | Nodes: [{nodes_str}]")
+                for node_name, voltage_array in result['results'].items():
+                    voltage = float(voltage_array[0]) if len(voltage_array) > 0 else 0.0
+                    # Make node name clickable with HTML link
+                    clickable_node = f"<a href='node:{node_name}' style='color: #0066cc; text-decoration: none;'>{node_name}</a>"
+                    html_lines.append(f"\n  {clickable_node}: {voltage:.6f} V")
 
-        output_lines.append("")
+                html_lines.append("\n")
 
-        # Add SPICE netlist
-        output_lines.append("=== SPICE Netlist ===")
-        spice_netlist = self.netlist_builder.export_spice_netlist(netlist)
-        output_lines.append(spice_netlist)
+                # Show simplified circuit grid (optional)
+                if 'circuit_grid' in result:
+                    html_lines.append("\n=== Circuit Analysis ===")
+                    html_lines.append(f"\nComponents analyzed: {len(result['circuit_grid'])}")
 
-        output_lines.append("")
-        output_lines.append("=== Simulation Output ===")
-        output_lines.append("(Placeholder - backend simulation engine to be connected)")
-        output_lines.append("")
-        output_lines.append("The netlist above can be passed to your backend simulation engine.")
+                html_lines.append("</pre>")
 
-        simulation_result = "\n".join(output_lines)
+                if self.sim_output_panel:
+                    self.sim_output_panel.set_output("".join(html_lines), is_html=True)
 
-        if self.sim_output_panel:
-            self.sim_output_panel.set_output(simulation_result)
+                self.log_panel.log_message("[INFO] Simulation completed successfully")
+                return  # Early return to skip the standard text output at the end
 
-        self.log_panel.log_message("[INFO] Netlist generated successfully")
+            else:
+                # Error handling
+                output_lines.append("Simulation failed!")
+                output_lines.append("")
+                output_lines.append(f"Error: {result.get('error', 'Unknown error')}")
+
+                if result.get('error_type'):
+                    output_lines.append(f"Error Type: {result['error_type']}")
+
+                if result.get('details'):
+                    output_lines.append("")
+                    output_lines.append("Details:")
+                    output_lines.append(result['details'])
+
+                # Special handling for PySpice not installed
+                if result.get('error_type') == 'ImportError':
+                    output_lines.append("")
+                    output_lines.append("PySpice is not installed. To install it, run:")
+                    output_lines.append("  pip install PySpice")
+                    output_lines.append("")
+                    output_lines.append("Note: PySpice requires ngspice to be installed on your system.")
+
+                # Show traceback if available
+                if result.get('traceback'):
+                    output_lines.append("")
+                    output_lines.append("=== Traceback ===")
+                    output_lines.append(result['traceback'])
+
+                # Show debug data if available
+                if result.get('debug_data'):
+                    debug_data = result['debug_data']
+                    output_lines.append("")
+                    output_lines.append("=== Debug Information ===")
+
+                    if 'original_grid' in debug_data:
+                        output_lines.append("")
+                        output_lines.append("Original Circuit Grid:")
+                        output_lines.append(debug_data['original_grid'])
+
+                    if 'transformed_grid' in debug_data:
+                        output_lines.append("")
+                        output_lines.append("Transformed Circuit Grid:")
+                        output_lines.append(debug_data['transformed_grid'])
+
+                    if 'netlist' in debug_data:
+                        output_lines.append("")
+                        output_lines.append("Generated Netlist:")
+                        output_lines.append(debug_data['netlist'])
+
+                self.log_panel.log_message(f"[ERROR] {result.get('error', 'Simulation failed')}")
+
+            simulation_result = "\n".join(output_lines)
+
+            if self.sim_output_panel:
+                self.sim_output_panel.set_output(simulation_result)
+
+        except Exception as e:
+            import traceback
+            error_msg = f"Unexpected error during simulation: {e}"
+            self.log_panel.log_message(f"[ERROR] {error_msg}")
+
+            output_lines = ["=== Simulation Error ===", ""]
+            output_lines.append(error_msg)
+            output_lines.append("")
+            output_lines.append("=== Traceback ===")
+            output_lines.append(traceback.format_exc())
+
+            if self.sim_output_panel:
+                self.sim_output_panel.set_output("\n".join(output_lines))
 
     def on_stop(self):
         self.log_panel.log_message("[INFO] Simulation stopped")
@@ -1158,12 +1224,15 @@ class MainWindow(QMainWindow):
             if comp_type == "Resistor" and hasattr(self.inspect_panel, 'editResistance'):
                 if self.inspect_panel.editResistance.isVisible():
                     self.selected_component.value = self.inspect_panel.editResistance.text()
-            elif comp_type in ["Voltage Source", "Vdc"] and hasattr(self.inspect_panel, 'editVoltage'):
+            elif comp_type == "Vdc" and hasattr(self.inspect_panel, 'editVoltage'):
                 if self.inspect_panel.editVoltage.isVisible():
                     self.selected_component.value = self.inspect_panel.editVoltage.text()
-            elif comp_type == "Current Source" and hasattr(self.inspect_panel, 'editCurrent'):
-                if self.inspect_panel.editCurrent.isVisible():
-                    self.selected_component.value = self.inspect_panel.editCurrent.text()
+            elif comp_type == "Switch" and hasattr(self.inspect_panel, 'comboSwitchState'):
+                if self.inspect_panel.comboSwitchState.isVisible():
+                    self.selected_component.value = self.inspect_panel.comboSwitchState.currentText()
+            elif comp_type == "Light" and hasattr(self.inspect_panel, 'labelLightStateValue'):
+                # Light state is read-only, determined by circuit simulation
+                pass
 
     # Connection and selection handlers
     def on_connection_point_clicked(self, connection_point):
@@ -1419,6 +1488,100 @@ class MainWindow(QMainWindow):
             return False
 
         return True
+
+    def on_node_clicked(self, node_name: str):
+        """Handle clicking on a node name in simulation output to select the corresponding wire"""
+        self.log_panel.log_message(f"[INFO] Node clicked: {node_name}")
+
+        # Parse the node name to find connected components
+        # Node names are in format: "component1/component2" or single component like "ground1"
+        if '/' in node_name:
+            # Split to get the two connected components
+            parts = node_name.split('/')
+            if len(parts) == 2:
+                comp1_name, comp2_name = parts
+                # Find wires connecting these components
+                wires = self._find_wires_between_components(comp1_name, comp2_name)
+                if wires:
+                    # Clear previous selection
+                    self.scene.clearSelection()
+                    # Select all wires connecting these components
+                    for wire in wires:
+                        wire.setSelected(True)
+                    self.log_panel.log_message(f"[INFO] Selected {len(wires)} wire(s) connecting {comp1_name} and {comp2_name}")
+                else:
+                    self.log_panel.log_message(f"[WARN] No wire found connecting {comp1_name} and {comp2_name}")
+        else:
+            # Single component node (like ground)
+            self.log_panel.log_message(f"[INFO] Node is single component: {node_name}")
+
+    def _find_wires_between_components(self, comp1_name: str, comp2_name: str):
+        """Find all wires connecting two components by their backend names"""
+        wires = []
+
+        # First, find the components by matching their backend names
+        # Backend names are like '1', '2' for resistors, 'voltage_source', 'ground1', etc.
+        comp1_items = self._find_components_by_backend_name(comp1_name)
+        comp2_items = self._find_components_by_backend_name(comp2_name)
+
+        if not comp1_items or not comp2_items:
+            return wires
+
+        # Find wires connecting any combination of these components
+        for wire in self.scene.items():
+            if not isinstance(wire, Wire):
+                continue
+
+            # Get the wire's endpoints
+            start_point = getattr(wire, 'start_point', None)
+            end_point = getattr(wire, 'end_point', None)
+
+            if not start_point or not end_point:
+                continue
+
+            # Check if wire connects the two components (directly or via junctions)
+            start_component = self._get_component_for_point(start_point)
+            end_component = self._get_component_for_point(end_point)
+
+            # Check if this wire connects our target components
+            if ((start_component in comp1_items and end_component in comp2_items) or
+                (start_component in comp2_items and end_component in comp1_items)):
+                wires.append(wire)
+
+        return wires
+
+    def _find_components_by_backend_name(self, backend_name: str):
+        """Find components in the scene that match a backend component name"""
+        components = []
+
+        for item in self.scene.items():
+            if hasattr(item, 'component_type'):
+                # Map component types to backend names
+                comp_type = item.component_type
+
+                # Check if this matches the backend name
+                if backend_name == 'voltage_source' and comp_type == 'Vdc':
+                    components.append(item)
+                elif backend_name.startswith('ground') and comp_type == 'GND':
+                    components.append(item)
+                elif backend_name.isdigit() and comp_type == 'Resistor':
+                    # For numbered components like '1', '2', '3' (resistors)
+                    # We'd need to track which resistor is which number
+                    # For now, accept all resistors as potential matches
+                    components.append(item)
+
+        return components
+
+    def _get_component_for_point(self, point):
+        """Get the component that owns a connection point or junction"""
+        if isinstance(point, JunctionPoint):
+            # For junctions, we need to trace through connected wires
+            # For simplicity, return None and handle in wire search logic
+            return None
+
+        # For connection points, get parent component
+        parent = getattr(point, 'parent_component', None)
+        return parent
 
     def closeEvent(self, event):
         """Handle close event - prompt to save if there are unsaved changes"""
