@@ -1,17 +1,19 @@
 import sys
 import json
 import os
+import traceback
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QGraphicsScene, QMessageBox, QFileDialog, QDialog
+    QSplitter, QGraphicsScene, QMessageBox, QFileDialog, QDialog, QGroupBox, QGraphicsRectItem, QInputDialog
 )
-from PyQt6.QtCore import Qt, QPointF, QSettings, QEvent
-from PyQt6.QtGui import QPen, QColor, QUndoStack
+from PyQt6.QtCore import Qt, QPointF, QSettings, QEvent, QTimer, QRectF
+from PyQt6.QtGui import QPen, QColor, QUndoStack, QBrush, QImage, QPainter
 
 from components import (
     Wire, JunctionPoint,
     ComponentItem, DroppableGraphicsView
 )
+from components.connection_points import ConnectionPoint
 
 # Import the new UI components
 from ui.components_panel import ComponentsPanel
@@ -126,8 +128,6 @@ class MainWindow(QMainWindow):
 
     def setupSandboxSection(self):
         """Setup the Sandbox (Zandbak) section"""
-        from PyQt6.QtWidgets import QGroupBox
-
         self.groupSandbox = QGroupBox("Canvas")
         self.splitterMain.addWidget(self.groupSandbox)
 
@@ -205,7 +205,6 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         # Ensure overlay is positioned after initial show and layout
         try:
-            from PyQt6.QtCore import QTimer
             QTimer.singleShot(0, self._position_floating_controls)
         except Exception:
             self._position_floating_controls()
@@ -291,8 +290,6 @@ class MainWindow(QMainWindow):
             add_line(visual_left, y, visual_left + visual_width, y, pen)
 
         # Add shaded forbidden border rectangles
-        from PyQt6.QtGui import QBrush
-        from PyQt6.QtWidgets import QGraphicsRectItem
         shaded_brush = QBrush(QColor(50, 50, 50, 40))
         def add_shaded_rect(x, y, w, h):
             rect_item = QGraphicsRectItem(x, y, w, h)
@@ -343,8 +340,7 @@ class MainWindow(QMainWindow):
             settings = QSettings("ECis", "CircuitDesigner")
             sizes_json = settings.value("right_splitter_sizes", "")
             if sizes_json:
-                import json as _json
-                sizes = _json.loads(sizes_json)
+                sizes = json.loads(sizes_json)
                 if isinstance(sizes, list) and all(isinstance(x, int) for x in sizes):
                     self.right_splitter.setSizes(sizes)
                 else:
@@ -834,8 +830,6 @@ class MainWindow(QMainWindow):
 
     def _prompt_for_project_name(self, default_name=None):
         """Prompt user for a project name"""
-        from PyQt6.QtWidgets import QInputDialog
-
         # Generate default name with auto-increment if not provided
         if default_name is None:
             default_name = self._get_next_project_name()
@@ -992,7 +986,6 @@ class MainWindow(QMainWindow):
                 self.sim_output_panel.set_output(simulation_result)
 
         except Exception as e:
-            import traceback
             error_msg = f"Unexpected error during simulation: {e}"
             self.log_panel.log_message(f"[ERROR] {error_msg}")
 
@@ -1104,8 +1097,6 @@ class MainWindow(QMainWindow):
 
     def on_copy_output_clicked(self):
         """Copy simulation output to clipboard"""
-        from PyQt6.QtWidgets import QApplication
-
         output_text = self.sim_output_panel.get_output_text() if self.sim_output_panel else ""
         if output_text.strip():
             clipboard = QApplication.clipboard()
@@ -1139,9 +1130,6 @@ class MainWindow(QMainWindow):
 
     def on_export_png(self):
         """Export circuit canvas as PNG image"""
-        from PyQt6.QtGui import QImage, QPainter
-        from PyQt6.QtCore import QRectF
-
         # Ask user for save location
         file_path, _ = QFileDialog.getSaveFileName(
             self,
@@ -1406,7 +1394,6 @@ class MainWindow(QMainWindow):
 
     def delete_selected_components(self):
         """Delete selected components from the scene (with undo support)"""
-        from components.connection_points import ConnectionPoint
         selected_items = self.scene.selectedItems()
         if not selected_items:
             return
@@ -1621,8 +1608,7 @@ class MainWindow(QMainWindow):
         try:
             settings = QSettings("ECis", "CircuitDesigner")
             if hasattr(self, 'right_splitter') and self.right_splitter is not None:
-                import json as _json
-                settings.setValue("right_splitter_sizes", _json.dumps(self.right_splitter.sizes()))
+                settings.setValue("right_splitter_sizes", json.dumps(self.right_splitter.sizes()))
         except Exception:
             pass
 
