@@ -163,14 +163,15 @@ class CircuitGridTransformer:
                 case 'voltage_source':
                     component_function = circuit.V
                     unit = component_data['value']@u_V
-                case 'resistor':
+                case 'resistor' | 'switch' | 'led':
+                    # Resistors, switches (as variable resistors), and LEDs (as resistors)
                     component_function = circuit.R
                     unit = component_data['value']@u_Ohm
                 case 'splitwire':
                     for connection in component_data['connections']:
                         if self.circuit_grid[connection]['type'] != 'ground':
                             continue
-                        circuit.R(f'supporting_resistor{supporting_resistors}', component_name, circuit.gnd, 0@u_Ohm)
+                        circuit.R(f'supporting_resistor{supporting_resistors}', component_name, circuit.gnd, 0.001@u_Ohm)
                         supporting_resistors += 1  # Increment counter to avoid duplicate names
                     continue
                 case _:

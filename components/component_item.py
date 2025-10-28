@@ -22,6 +22,10 @@ class ComponentItem(QGraphicsRectItem):
         self.orientation = 0  # Default orientation in degrees (0,90,180,270)
         self.net_id = ""  # Network ID for circuit analysis
 
+        # LED-specific: threshold voltage
+        if component_type == "LED":
+            self.led_threshold = 1.5  # Default threshold in volts
+
         # Create rectangle based on grid size (base orientation 0)
         width = size_w * grid_spacing
         height = size_h * grid_spacing
@@ -46,7 +50,7 @@ class ComponentItem(QGraphicsRectItem):
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemSendsGeometryChanges)
 
         # Define component categories
-        self.single_connection_types = {"Vdc", "GND", "Light"}
+        self.single_connection_types = {"Vdc", "GND"}  # LED now has two connections
 
         # Initialize transform origin to anchor point
         self.update_transform_origin()
@@ -63,7 +67,7 @@ class ComponentItem(QGraphicsRectItem):
             return "5V"
         elif self.component_type == "Switch":
             return "Open"
-        elif self.component_type == "Light":
+        elif self.component_type == "LED":
             return "Off"
         elif self.component_type == "GND":
             return "0V"
@@ -165,7 +169,7 @@ class ComponentItem(QGraphicsRectItem):
                         gx, gy = free_pos
                         self.move_to_grid_position(gx, gy)
                         if hasattr(main_window, 'log_panel'):
-                            main_window.log_panel.log_message(f"[WARN] Overlap na rotatie opgelost door verplaatsing naar {free_pos}")
+                            main_window.log_panel.log_message(f"[WARN] Overlap after rotation resolved by moving to {free_pos}")
 
         # Update inspect panel if this component is selected
         scene = self.scene()
@@ -266,7 +270,8 @@ class ComponentItem(QGraphicsRectItem):
         mid_x = width / 2.0
         mid_y = height / 2.0
         self.connection_points = []
-        if self.component_type in ["Resistor", "Switch"]:
+        if self.component_type in ["Resistor", "Switch", "LED"]:
+            # Two-terminal components (in and out)
             if self.orientation == 0:      # Horizontal (anchor at left, y=0 grid row)
                 left_point = ConnectionPoint(self, 0, 0, "in")
                 right_point = ConnectionPoint(self, width, 0, "out")
@@ -283,7 +288,8 @@ class ComponentItem(QGraphicsRectItem):
                 top_point = ConnectionPoint(self, mid_x, height, "in")
                 bottom_point = ConnectionPoint(self, mid_x, 0, "out")
                 self.connection_points.extend([top_point, bottom_point])
-        elif self.component_type in ["Vdc", "GND", "Light"]:
+        elif self.component_type in ["Vdc", "GND"]:
+            # Single terminal components
             terminal = ConnectionPoint(self, 0, 0, "terminal")
             self.connection_points.append(terminal)
 
@@ -403,8 +409,8 @@ class ComponentItem(QGraphicsRectItem):
             return self.create_ground_icon(width, height)
         elif self.component_type == "Switch":
             return self.create_switch_icon(width, height)
-        elif self.component_type == "Light":
-            return self.create_light_icon(width, height)
+        elif self.component_type == "LED":
+            return self.create_led_icon(width, height)
         return None
 
     def create_resistor_icon(self, width, height):
@@ -578,8 +584,8 @@ class ComponentItem(QGraphicsRectItem):
         icon_item.setPos(0, 0)
         return icon_item
 
-    def create_light_icon(self, width, height):
-        """Create a light bulb icon (circle with filament and rays)"""
+    def create_led_icon(self, width, height):
+        """Create an LED icon (triangle with arrows)"""
         pixmap = QPixmap(int(width), int(height))
         pixmap.fill(Qt.GlobalColor.transparent)
 

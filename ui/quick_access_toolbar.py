@@ -1,8 +1,8 @@
 """Quick Access Toolbar with customizable pinned actions"""
 
 from PyQt6.QtWidgets import QToolBar, QWidgetAction, QWidget, QHBoxLayout, QLabel, QToolButton, QStyle, QMenu, QApplication
-from PyQt6.QtCore import QSettings, pyqtSignal, Qt, QMimeData, QByteArray, QPoint
-from PyQt6.QtGui import QAction, QIcon, QDrag, QPainter, QPen, QColor
+from PyQt6.QtCore import QSettings, pyqtSignal, Qt, QMimeData, QByteArray, QPoint, QPointF
+from PyQt6.QtGui import QAction, QIcon, QDrag, QPainter, QPen, QColor, QPixmap, QPolygonF
 
 
 class QuickAccessToolbar(QToolBar):
@@ -346,13 +346,42 @@ class PinnableMenuAction(QWidgetAction):
 
         return widget
 
+    def _make_pin_icon(self, pinned: bool) -> QIcon:
+        """Create custom pin icon that works on Linux."""
+        size = 16
+        pm = QPixmap(size, size)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        if pinned:
+            # Filled pin (pinned state)
+            p.setPen(QPen(QColor(70, 130, 180), 1.5))
+            p.setBrush(QColor(70, 130, 180))
+            # Draw pin head (circle)
+            p.drawEllipse(4, 2, 8, 8)
+            # Draw pin needle (line)
+            p.drawLine(8, 10, 8, 14)
+        else:
+            # Outline pin (unpinned state)
+            p.setPen(QPen(QColor(120, 120, 120), 1.5))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            # Draw pin head (circle outline)
+            p.drawEllipse(4, 2, 8, 8)
+            # Draw pin needle (line)
+            p.drawLine(8, 10, 8, 14)
+
+        p.end()
+        return QIcon(pm)
+
     def update_pin_button(self):
         """Update pin button appearance"""
+        self.pin_button.setText("")  # Clear any text
         if self.toolbar.is_pinned(self.name):
-            self.pin_button.setText("📌")
+            self.pin_button.setIcon(self._make_pin_icon(True))
             self.pin_button.setToolTip("Unpin from toolbar")
         else:
-            self.pin_button.setText("📍")
+            self.pin_button.setIcon(self._make_pin_icon(False))
             self.pin_button.setToolTip("Pin to toolbar")
 
     def toggle_pin(self):

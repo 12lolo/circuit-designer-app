@@ -114,12 +114,23 @@ class DroppableGraphicsView(QGraphicsView):
                 anchor_local = component.get_anchor_local_pos()
                 component.setPos(scene_pos - anchor_local)
 
-                # Snap to grid based on anchor (before adding to scene)
-                component.snap_to_grid()
-
                 # Resolve conflicts (prevent duplicate grid coordinate)
                 main_window = self.main_window
                 should_add = True
+
+                # Add component through undo stack for undo/redo support (must be in scene before snap_to_grid)
+                if should_add and hasattr(main_window, 'undo_stack'):
+                    from ui.undo_commands import AddComponentCommand
+                    command = AddComponentCommand(self.scene(), component, f"Add {component.component_type}")
+                    main_window.undo_stack.push(command)
+                else:
+                    # Fallback if undo stack not available
+                    self.scene().addItem(component)
+
+                # NOW snap to grid (component must be in scene for this to work)
+                component.snap_to_grid()
+
+                # Check for conflicts after snapping
                 if hasattr(main_window, 'check_position_conflict') and main_window.check_position_conflict(component):
                     if hasattr(main_window, 'find_free_grid_position'):
                         free_pos = main_window.find_free_grid_position(component.get_display_grid_position(), component)
@@ -127,26 +138,16 @@ class DroppableGraphicsView(QGraphicsView):
                             gx, gy = free_pos
                             component.move_to_grid_position(gx, gy)
                         else:
-                            # Don't add component if no free spot
+                            # Remove component if no free spot
+                            self.scene().removeItem(component)
                             should_add = False
                             if hasattr(main_window, 'log_panel'):
                                 main_window.log_panel.log_message("[WARN] No free position available for component placement")
                             event.acceptProposedAction()
                             return
 
-                # Add component through undo stack for undo/redo support
-                if should_add and hasattr(main_window, 'undo_stack'):
-                    from ui.undo_commands import AddComponentCommand
-                    command = AddComponentCommand(self.scene(), component, f"Add {component.component_type}")
-                    main_window.undo_stack.push(command)
-
-                    # Auto-select the newly dropped component
-                    component.setSelected(True)
-                    if hasattr(main_window, 'on_component_selected'):
-                        main_window.on_component_selected(component)
-                else:
-                    # Fallback if undo stack not available
-                    self.scene().addItem(component)
+                # Auto-select the newly dropped component
+                if should_add:
                     component.setSelected(True)
                     if hasattr(main_window, 'on_component_selected'):
                         main_window.on_component_selected(component)

@@ -161,10 +161,17 @@ class InspectPanel(QGroupBox):
         self.comboSwitchState.currentTextChanged.connect(self.field_changed.emit)
         self.formLayout_inspect.addRow(self.labelSwitchState, self.comboSwitchState)
 
-        # Light State
-        self.labelLightState = QLabel("State")
-        self.labelLightStateValue = QLabel("--")
-        self.formLayout_inspect.addRow(self.labelLightState, self.labelLightStateValue)
+        # LED State
+        self.labelLEDState = QLabel("State")
+        self.labelLEDStateValue = QLabel("--")
+        self.formLayout_inspect.addRow(self.labelLEDState, self.labelLEDStateValue)
+
+        # LED Threshold Voltage
+        self.labelLEDThreshold = QLabel("Threshold")
+        self.editLEDThreshold = ValueInputWidget()
+        self.editLEDThreshold.setPlaceholderText("e.g., 1.5V, 2V")
+        self.editLEDThreshold.textChanged.connect(self.field_changed.emit)
+        self.formLayout_inspect.addRow(self.labelLEDThreshold, self.editLEDThreshold)
 
         # Orientation
         self.labelOrient = QLabel("Orientation")
@@ -195,7 +202,7 @@ class InspectPanel(QGroupBox):
                 'labelName', 'editName', 'labelType', 'labelTypeValue',
                 'labelPosition', 'labelPositionValue', 'labelResistance', 'editResistance',
                 'labelVoltage', 'editVoltage', 'labelSwitchState', 'comboSwitchState',
-                'labelLightState', 'labelLightStateValue',
+                'labelLEDState', 'labelLEDStateValue', 'labelLEDThreshold', 'editLEDThreshold',
                 'labelOrient', 'comboOrient', 'labelWireLength', 'labelWireLengthValue',
                 'labelBendPoints', 'labelBendPointsValue', 'labelNetId', 'labelNetIdValue',
                 'labelWireEndpoints', 'labelWireEndpointsValue'
@@ -220,7 +227,8 @@ class InspectPanel(QGroupBox):
                 ('labelResistance', 'editResistance'),
                 ('labelVoltage', 'editVoltage'),
                 ('labelSwitchState', 'comboSwitchState'),
-                ('labelLightState', 'labelLightStateValue'),
+                ('labelLEDState', 'labelLEDStateValue'),
+                ('labelLEDThreshold', 'editLEDThreshold'),
                 ('labelOrient', 'comboOrient'),
                 ('labelWireLength', 'labelWireLengthValue'),
                 ('labelBendPoints', 'labelBendPointsValue'),
@@ -239,8 +247,10 @@ class InspectPanel(QGroupBox):
             elif component_type == "Switch":
                 self.labelSwitchState.show(); self.comboSwitchState.show()
                 self.labelOrient.show(); self.comboOrient.show()
-            elif component_type == "Light":
-                self.labelLightState.show(); self.labelLightStateValue.show()
+            elif component_type == "LED":
+                self.labelLEDState.show(); self.labelLEDStateValue.show()
+                self.labelLEDThreshold.show(); self.editLEDThreshold.show()
+                self.labelOrient.show(); self.comboOrient.show()
 
             # Net ID always
             self.labelNetId.show(); self.labelNetIdValue.show()
@@ -256,7 +266,8 @@ class InspectPanel(QGroupBox):
             component_fields = [
                 'labelName', 'editName', 'labelPosition', 'labelPositionValue',
                 'labelResistance', 'editResistance', 'labelVoltage', 'editVoltage',
-                'labelSwitchState', 'comboSwitchState', 'labelLightState', 'labelLightStateValue',
+                'labelSwitchState', 'comboSwitchState', 'labelLEDState', 'labelLEDStateValue',
+                'labelLEDThreshold', 'editLEDThreshold',
                 'labelOrient', 'comboOrient'
             ]
             for field_name in component_fields:
@@ -333,8 +344,13 @@ class InspectPanel(QGroupBox):
                     if index >= 0:
                         self.comboSwitchState.setCurrentIndex(index)
                     self.comboSwitchState.blockSignals(old_block)
-                elif component.component_type == "Light":
-                    self.labelLightStateValue.setText(value)
+                elif component.component_type == "LED":
+                    self.labelLEDStateValue.setText(value)
+                    # Also set threshold if component has it
+                    if hasattr(component, 'led_threshold'):
+                        old_block = self.editLEDThreshold.blockSignals(True)
+                        self.editLEDThreshold.setText(str(component.led_threshold) + "V")
+                        self.editLEDThreshold.blockSignals(old_block)
 
     def update_wire_data(self, wire):
         """Update the panel with wire data, including endpoint grid coordinates"""

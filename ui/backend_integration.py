@@ -26,14 +26,22 @@ class BackendSimulator:
         Parse component value string to a numerical value
 
         Args:
-            value_str: String like "1kΩ", "5V", "10mA", etc.
+            value_str: String like "1kΩ", "5V", "10mA", "Open", "Closed", etc.
             component_type: Type of component
 
         Returns:
             Float value in base units (Ohms, Volts, Amps)
+            For switches: 1e9 (very high) for Open, 0.001 for Closed
         """
         if not value_str:
             return 0.0
+
+        # Handle switch states specially
+        value_str_stripped = value_str.strip()
+        if value_str_stripped == "Open":
+            return 1e9  # Very high resistance for open switch (essentially infinite)
+        elif value_str_stripped == "Closed":
+            return 0.001  # Very low resistance for closed switch (essentially zero)
 
         # Remove spaces and convert to uppercase for easier parsing
         value_str = value_str.strip().upper()
@@ -190,8 +198,11 @@ class BackendSimulator:
             }
 
             # Add value only for components that need it
-            if backend_type in ['resistor', 'voltage_source'] and value is not None:
+            if backend_type in ['resistor', 'voltage_source', 'switch', 'led'] and value is not None:
                 circuit_grid[component_name]['value'] = value
+            # For LED, set default resistance if no value specified
+            elif backend_type == 'led' and value is None:
+                circuit_grid[component_name]['value'] = 100  # Default LED resistance in ohms
 
         # Get all component coordinates to avoid placing splitwires there
         component_coords = set()
@@ -212,7 +223,7 @@ class BackendSimulator:
         all_valid_coords = component_coords | junction_coords
 
         # Second pass: add junction points as splitwires (but skip ones at component locations)
-        node_counter = 0
+        # node_counter already incremented from split wires, continue from there
         for idx, junction in enumerate(junctions):
             coord = self._get_grid_coord(junction.scenePos())
 
@@ -292,8 +303,8 @@ class BackendSimulator:
             'Resistor': 'resistor',
             'Vdc': 'voltage_source',
             'GND': 'ground',
-            'Switch': None,  # Not yet implemented in backend
-            'Light': None     # Not yet implemented in backend
+            'Switch': 'switch',
+            'LED': 'led'
         }
         return mapping.get(component_type)
 
@@ -310,6 +321,12 @@ class BackendSimulator:
         elif component_type == 'ground':
             counters['ground'] = counters.get('ground', 0) + 1
             return f'ground{counters["ground"]}'
+        elif component_type == 'switch':
+            counters['switch'] = counters.get('switch', 0) + 1
+            return f'switch{counters["switch"]}'
+        elif component_type == 'led':
+            counters['led'] = counters.get('led', 0) + 1
+            return f'led{counters["led"]}'
         return f'{component_type}_{counters.get(component_type, 0)}'
 
     def _find_wire_connections(self, connection_point, wires, components, junctions) -> List[tuple]:

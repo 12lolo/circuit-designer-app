@@ -357,6 +357,7 @@ class MainWindow(QMainWindow):
         self.inspect_panel.field_changed.connect(self.on_inspect_field_changed)
         self.sim_output_panel.copy_output_requested.connect(self.on_copy_output_clicked)
         self.sim_output_panel.node_clicked.connect(self.on_node_clicked)
+        self.sim_output_panel.led_clicked.connect(self.on_led_clicked)
 
     def setupLogSection(self):
         """Setup the Log section (placed in vertical splitter for resizable height)"""
@@ -385,7 +386,6 @@ class MainWindow(QMainWindow):
         self.toolbar_manager.undo_requested.connect(self.undo_stack.undo)
         self.toolbar_manager.redo_requested.connect(self.undo_stack.redo)
         self.toolbar_manager.run_requested.connect(self.on_run)
-        self.toolbar_manager.stop_requested.connect(self.on_stop)
 
         # Connect additional action signals
         self.toolbar_manager.copy_requested.connect(self.on_copy)
@@ -442,7 +442,6 @@ class MainWindow(QMainWindow):
         # Simulation menu
         sim_menu = menubar.addMenu("&Simulation")
         make_menu_pinnable(sim_menu, toolbar, self.toolbar_manager.actionRun, "Run")
-        make_menu_pinnable(sim_menu, toolbar, self.toolbar_manager.actionStop, "Stop")
         sim_menu.addSeparator()
         make_menu_pinnable(sim_menu, toolbar, self.toolbar_manager.actionCopyOutput, "Copy Output")
 
@@ -452,11 +451,6 @@ class MainWindow(QMainWindow):
         shortcuts_action = settings_menu.addAction("Keyboard Shortcuts...")
         shortcuts_action.triggered.connect(self.on_show_shortcuts_dialog)
 
-        # Help menu
-        help_menu = menubar.addMenu("&Help")
-
-        about_action = help_menu.addAction("About ECis-full")
-        about_action.triggered.connect(self.on_about)
 
     def on_show_shortcuts_dialog(self):
         """Show the keyboard shortcuts settings dialog"""
@@ -661,6 +655,39 @@ class MainWindow(QMainWindow):
             return f"{component.component_type}_{component.x()}_{component.y()}"
         return None
 
+    def _find_connection_point_at_position(self, position, component_id, component_map):
+        """Find the connection point at a given position, optionally on a specific component"""
+        # If we have a component_id, try to find the connection point on that specific component
+        if component_id and component_id in component_map:
+            component = component_map[component_id]
+            # Find the closest connection point on this component
+            if hasattr(component, 'connection_points'):
+                closest_point = None
+                min_distance = float('inf')
+
+                for cp in component.connection_points:
+                    cp_pos = cp.get_scene_pos()
+                    distance = ((cp_pos.x() - position.x())**2 + (cp_pos.y() - position.y())**2)**0.5
+                    if distance < min_distance:
+                        min_distance = distance
+                        closest_point = cp
+
+                # Accept if within 20 pixels (roughly half a grid spacing)
+                if closest_point and min_distance < 20:
+                    return closest_point
+
+        # Otherwise, search all items in the scene at that position
+        tolerance = 10  # pixels
+        for item in self.scene.items():
+            # Check if it's a connection point
+            if hasattr(item, 'get_scene_pos') and hasattr(item, 'connected_wires'):
+                item_pos = item.get_scene_pos()
+                distance = ((item_pos.x() - position.x())**2 + (item_pos.y() - position.y())**2)**0.5
+                if distance < tolerance:
+                    return item
+
+        return None
+
     def deserialize_project_data(self, project_data):
         """Load project data from a dictionary"""
         # Clear the current scene
@@ -704,24 +731,33 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.log_panel.log_message(f"[ERROR] Error loading component: {e}")
 
-        # Load wires (simplified approach - just create wires between points)
+        # Load wires - reconnect to actual component connection points
         for wire_data in project_data.get("wires", []):
             try:
-                # For now, create junction points at wire positions
-                # In a more complete implementation, you'd reconstruct the exact wire connections
                 start_pos = wire_data["start"]
                 end_pos = wire_data["end"]
+                start_component_id = wire_data["start"].get("component_id")
+                end_component_id = wire_data["end"].get("component_id")
 
-                # Create junction points
-                start_junction = JunctionPoint(QPointF(start_pos["x"], start_pos["y"]))
-                end_junction = JunctionPoint(QPointF(end_pos["x"], end_pos["y"]))
+                # Find connection points at the wire positions
+                start_point = self._find_connection_point_at_position(
+                    QPointF(start_pos["x"], start_pos["y"]),
+                    start_component_id,
+                    component_map
+                )
+                end_point = self._find_connection_point_at_position(
+                    QPointF(end_pos["x"], end_pos["y"]),
+                    end_component_id,
+                    component_map
+                )
 
-                self.scene.addItem(start_junction)
-                self.scene.addItem(end_junction)
-
-                # Create wire between junction points
-                wire = Wire(start_junction, end_junction)
-                self.scene.addItem(wire)
+                # Only create wire if both endpoints are valid
+                if start_point and end_point:
+                    wire = Wire(start_point, end_point)
+                    self.scene.addItem(wire)
+                    wire.update_position()  # Ensure wire is drawn correctly
+                else:
+                    self.log_panel.log_message(f"[WARN] Could not reconnect wire: endpoints not found")
 
             except Exception as e:
                 self.log_panel.log_message(f"[ERROR] Error loading wire: {e}")
@@ -928,6 +964,15 @@ class MainWindow(QMainWindow):
                     html_lines.append("\n=== Circuit Analysis ===")
                     html_lines.append(f"\nComponents analyzed: {len(result['circuit_grid'])}")
 
+                # Update LED states based on simulation results
+                led_state_changes = self._update_led_states(result)
+
+                # Display LED state changes in output
+                if led_state_changes:
+                    html_lines.append("\n\n=== LED States ===")
+                    for state_msg in led_state_changes:
+                        html_lines.append(f"\n  {state_msg}")
+
                 html_lines.append("</pre>")
 
                 if self.sim_output_panel:
@@ -1004,9 +1049,6 @@ class MainWindow(QMainWindow):
 
             if self.sim_output_panel:
                 self.sim_output_panel.set_output("\n".join(output_lines))
-
-    def on_stop(self):
-        self.log_panel.log_message("[INFO] Simulation stopped")
 
     def on_zoom_in(self):
         self.graphicsViewSandbox.scale(1.2, 1.2)
@@ -1108,9 +1150,9 @@ class MainWindow(QMainWindow):
         if output_text.strip():
             clipboard = QApplication.clipboard()
             clipboard.setText(output_text)
-            self.log_panel.log_message("[INFO] Simulatie output gekopieerd naar clipboard")
+            self.log_panel.log_message("[INFO] Simulation output copied to clipboard")
         else:
-            self.log_panel.log_message("[INFO] Geen simulatie output om te kopiëren")
+            self.log_panel.log_message("[INFO] No simulation output to copy")
 
     def on_select_all(self):
         """Select all items in the scene"""
@@ -1226,8 +1268,15 @@ class MainWindow(QMainWindow):
             elif comp_type == "Switch" and hasattr(self.inspect_panel, 'comboSwitchState'):
                 if self.inspect_panel.comboSwitchState.isVisible():
                     self.selected_component.value = self.inspect_panel.comboSwitchState.currentText()
-            elif comp_type == "Light" and hasattr(self.inspect_panel, 'labelLightStateValue'):
-                # Light state is read-only, determined by circuit simulation
+            elif comp_type == "LED":
+                # Update LED threshold if changed
+                if hasattr(self.inspect_panel, 'editLEDThreshold') and self.inspect_panel.editLEDThreshold.isVisible():
+                    threshold_text = self.inspect_panel.editLEDThreshold.text()
+                    if threshold_text:
+                        # Parse threshold voltage
+                        threshold_value = self.backend_simulator.parse_value(threshold_text, 'LED')
+                        self.selected_component.led_threshold = threshold_value
+                # LED state is read-only, determined by circuit simulation
                 pass
 
     # Connection and selection handlers
@@ -1290,31 +1339,6 @@ class MainWindow(QMainWindow):
         del self.first_selected_point
         del self.last_selected_point
 
-    def on_junction_point_clicked(self, junction_point):
-        """Handle click on a junction point"""
-        self.log_panel.log_message(f"[INFO] Junction point clicked")
-        junction_point.highlight(True)
-
-        if hasattr(self, 'last_selected_point') and self.last_selected_point != junction_point:
-            self.last_selected_point.highlight(False)
-
-        self.last_selected_point = junction_point
-
-        if hasattr(self, 'first_selected_point'):
-            if self.first_selected_point != junction_point:
-                wire = Wire(self.first_selected_point, junction_point)
-                command = AddWireCommand(self.scene, wire, self.first_selected_point, junction_point, "Connect Wire")
-                self.undo_stack.push(command)
-
-                self.first_selected_point.highlight(False)
-                junction_point.highlight(False)
-
-                del self.first_selected_point
-                del self.last_selected_point
-
-                self.log_panel.log_message("[INFO] Wire connected via junction point")
-        else:
-            self.first_selected_point = junction_point
 
     def on_wire_selected(self, wire):
         """Handle wire selection"""
@@ -1394,7 +1418,7 @@ class MainWindow(QMainWindow):
         """Handle component selection"""
         self.selected_component = component
         self.inspect_panel.update_component_data(component)
-        self.log_panel.log_message(f"[INFO] {component.component_type} geselecteerd")
+        self.log_panel.log_message(f"[INFO] {component.component_type} selected")
 
         conflict = self.check_position_conflict(component)
         if conflict and hasattr(self, 'log_panel'):
@@ -1402,17 +1426,36 @@ class MainWindow(QMainWindow):
 
     def delete_selected_components(self):
         """Delete selected components from the scene (with undo support)"""
+        from components.wire import Wire
+        from PyQt6.QtWidgets import QGraphicsLineItem
+
         selected_items = self.scene.selectedItems()
         if not selected_items:
             return
 
         # Collect items and their connected wires for undo
         items_data = []
+        processed_wires = set()  # Track wires we've already processed
 
         for item in selected_items:
             # Skip direct deletion of raw connection points (they are owned by components)
             if isinstance(item, ConnectionPoint):
                 continue
+
+            # If this is a wire segment, get the parent wire instead
+            if isinstance(item, QGraphicsLineItem) and hasattr(item, 'parent_wire'):
+                parent_wire = item.parent_wire
+                # Skip if we already processed this wire
+                if parent_wire in processed_wires:
+                    continue
+                processed_wires.add(parent_wire)
+                item = parent_wire
+
+            # Skip wires we've already processed
+            if isinstance(item, Wire) and item in processed_wires:
+                continue
+            if isinstance(item, Wire):
+                processed_wires.add(item)
 
             connected_wires = []
 
@@ -1484,6 +1527,68 @@ class MainWindow(QMainWindow):
 
         return True
 
+    def _update_led_states(self, simulation_result):
+        """Update LED component states based on simulation results"""
+        if not simulation_result.get('success'):
+            return
+
+        results = simulation_result.get('results', {})
+        component_name_mapping = simulation_result.get('component_name_mapping', {})
+
+        # Find LED backend names
+        led_backend_names = []
+        for backend_name, component in component_name_mapping.items():
+            if hasattr(component, 'component_type') and component.component_type == 'LED':
+                led_backend_names.append((backend_name, component))
+
+        # Store LED state changes for output (HTML formatted)
+        led_state_changes = []
+
+        # Update each LED based on voltage across it
+        for backend_name, led_component in led_backend_names:
+            # Try to find node voltages for this LED
+            # LEDs are named like "led1", "led2", etc.
+            # Look for nodes that reference this LED
+            led_voltage = 0.0
+
+            for node_name, voltage_array in results.items():
+                # Node names are like "led1/2" or "1/led1"
+                if backend_name in node_name:
+                    voltage = float(voltage_array[0]) if len(voltage_array) > 0 else 0.0
+                    led_voltage = abs(voltage)  # Use absolute value
+                    break
+
+            # Get threshold from component or use default
+            voltage_threshold = getattr(led_component, 'led_threshold', 1.5)  # Default 1.5V
+
+            old_state = led_component.value
+
+            # Update LED state based on voltage threshold
+            if led_voltage > voltage_threshold:
+                led_component.value = "On"
+                # Create clickable LED name for HTML output
+                clickable_led = f"<a href='led:{backend_name}' style='color: #0066cc; text-decoration: none;'>{backend_name}</a>"
+                state_message_html = f"LED {clickable_led} turned ON ({led_voltage:.2f}V > {voltage_threshold:.1f}V threshold)"
+                state_message_plain = f"LED {backend_name} turned ON ({led_voltage:.2f}V > {voltage_threshold:.1f}V threshold)"
+            else:
+                led_component.value = "Off"
+                # Create clickable LED name for HTML output
+                clickable_led = f"<a href='led:{backend_name}' style='color: #0066cc; text-decoration: none;'>{backend_name}</a>"
+                state_message_html = f"LED {clickable_led} stayed OFF ({led_voltage:.2f}V ≤ {voltage_threshold:.1f}V threshold)"
+                state_message_plain = f"LED {backend_name} stayed OFF ({led_voltage:.2f}V ≤ {voltage_threshold:.1f}V threshold)"
+
+            # Store state change for output (HTML version)
+            led_state_changes.append(state_message_html)
+            self.log_panel.log_message(f"[INFO] {state_message_plain}")
+
+            # Update inspect panel if this LED is selected
+            if self.selected_component is led_component:
+                if hasattr(self.inspect_panel, 'update_component_data'):
+                    self.inspect_panel.update_component_data(led_component)
+
+        # Return LED state changes to be displayed in simulation output
+        return led_state_changes
+
     def on_node_clicked(self, node_name: str):
         """Handle clicking on a node name in simulation output to select the corresponding wire"""
         self.log_panel.log_message(f"[INFO] Node clicked: {node_name}")
@@ -1509,6 +1614,27 @@ class MainWindow(QMainWindow):
         else:
             # Single component node (like ground)
             self.log_panel.log_message(f"[INFO] Node is single component: {node_name}")
+
+    def on_led_clicked(self, led_backend_name: str):
+        """Handle clicking on an LED name in simulation output to select the corresponding LED component"""
+        self.log_panel.log_message(f"[INFO] LED clicked: {led_backend_name}")
+
+        # Find the LED component by its backend name
+        if led_backend_name in self.component_name_mapping:
+            led_component = self.component_name_mapping[led_backend_name]
+
+            # Clear previous selection
+            self.scene.clearSelection()
+
+            # Select the LED component
+            led_component.setSelected(True)
+
+            # Update inspect panel to show LED details
+            self.on_component_selected(led_component)
+
+            self.log_panel.log_message(f"[INFO] Selected LED {led_backend_name}")
+        else:
+            self.log_panel.log_message(f"[WARN] LED {led_backend_name} not found in scene")
 
     def _find_wires_between_components(self, comp1_name: str, comp2_name: str):
         """Find all wires connecting two components by their backend names"""

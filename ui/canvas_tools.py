@@ -118,6 +118,31 @@ class CanvasTools(QObject):
         p.end()
         return QIcon(pm)
 
+    def _make_trash_icon(self) -> QIcon:
+        """Create a custom trash/delete icon that works well on Linux."""
+        size = 22
+        pm = QPixmap(size, size)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setPen(QPen(QColor(80, 80, 80), 1.8))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+        # Draw trash can body (rectangle)
+        p.drawRect(6, 9, 10, 10)
+        # Draw lid (horizontal line)
+        p.drawLine(4, 9, 18, 9)
+        # Draw handle on lid
+        p.drawLine(9, 6, 13, 6)
+        p.drawLine(9, 6, 9, 9)
+        p.drawLine(13, 6, 13, 9)
+        # Draw vertical lines inside can
+        p.drawLine(9, 11, 9, 17)
+        p.drawLine(14, 11, 14, 17)
+
+        p.end()
+        return QIcon(pm)
+
     class FloatingControls(QWidget):
         """Draggable floating controls that snap to the nearest corner of parent viewport.
         The widget keeps an 'anchor' property: one of 'top-left', 'top-right', 'bottom-left', 'bottom-right'.
@@ -319,14 +344,14 @@ class CanvasTools(QObject):
         # Prepare fallbacks
         fallback_zoom_in = self._make_magnifier_icon(plus=True)
         fallback_zoom_out = self._make_magnifier_icon(plus=False)
-        fallback_clear = w.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon)
+        fallback_clear = self._make_trash_icon()
         # Use a custom green play icon to satisfy the requirement
         fallback_run = self._make_green_play_icon()
 
         # Icons (theme with graceful fallbacks)
         zoom_in_icon = icon_from_theme("zoom-in", fallback_zoom_in)
         zoom_out_icon = icon_from_theme("zoom-out", fallback_zoom_out)
-        clear_icon = icon_from_theme("user-trash", fallback_clear)
+        clear_icon = fallback_clear  # always use custom trash icon
         run_icon = fallback_run  # always use green play icon
 
         # Buttons: lens icons for zoom, trash for clear, green run (icon-only)

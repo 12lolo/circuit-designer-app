@@ -96,116 +96,103 @@ class BendPoint(QGraphicsEllipseItem):
 
 
 class JunctionPoint(QGraphicsEllipseItem):
-    """A junction point where multiple wires can connect"""
-    def __init__(self, position):
+    """A junction point on a wire where an additional wire can branch off (behaves like a draggable bend point)"""
+    def __init__(self, parent_wire, position):
         self.radius = 6
         super().__init__(-self.radius, -self.radius, self.radius * 2, self.radius * 2)
-        self.connected_wires = []
+        self.parent_wire = parent_wire
         self.dragging = False
-        self._press_scene_pos = None
-        self._allow_programmatic_move = False  # Flag to allow wire updates
+        self.connected_wires = []  # List of wires connected to this junction
+        self._press_pos = None  # Track press position to detect clicks vs drags
 
         # Set position
         self.setPos(position)
 
-        # Set appearance - black filled circle
+        # Set appearance - black filled circle (larger and different from bend point)
         self.setBrush(QBrush(QColor(0, 0, 0)))
-        self.setPen(QPen(QColor(0, 0, 0), 2))
+        self.setPen(QPen(QColor(50, 50, 50), 2))
 
-        # Set z-value to render junction points above wires but below bend points
-        self.setZValue(30)
-
-        # Enable selection and geometry change notifications; movement is permitted but guarded in events
+        # Make it draggable
         self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsSelectable)
         self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemSendsGeometryChanges)
         self.setAcceptHoverEvents(True)
 
+        # Ensure it's on top (above bend points)
+        self.setZValue(110)
+
     def mousePressEvent(self, event):
-        """Start drag only if connected to at least one wire; otherwise behave as a clickable point."""
+        """Handle start of dragging or wire connection"""
         if event.button() == Qt.MouseButton.LeftButton:
-            if self.connected_wires:
-                self.dragging = True
-                self._press_scene_pos = event.scenePos()
-                self.setZValue(200)
-                super().mousePressEvent(event)
-                return
-            else:
-                # No wires: treat as click to participate in wiring, no move allowed
-                main_window = self.scene().views()[0].main_window
-                main_window.on_junction_point_clicked(self)
-                event.accept()
-                return
+            self.dragging = True
+            self._press_pos = event.scenePos()
+            # Bring to front while dragging
+            self.setZValue(200)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """During drag, move and update connected wires in realtime. Block movement if not dragging."""
+        """Handle dragging of junction point"""
         if self.dragging:
             super().mouseMoveEvent(event)
-            self._update_connected_wires_async()
-            return
-        # Block unintended movement when not dragging
-        event.ignore()
+            # Update the parent wire path when this junction moves
+            if self.parent_wire:
+                self.parent_wire.update_wire_path()
 
     def mouseReleaseEvent(self, event):
-        """End drag; if movement occurred, snap and update wires. Otherwise, treat as click."""
-        was_dragging = self.dragging
-        self.dragging = False
-        # Return to normal z-value
-        self.setZValue(30)
+        """Handle end of junction dragging or wire connection"""
+        if event.button() == Qt.MouseButton.LeftButton:
+            was_dragging = self.dragging
+            self.dragging = False
+            # Return to normal z-value
+            self.setZValue(110)
+
+            # Check if this was a click (no movement) or a drag
+            moved = False
+            if was_dragging and self._press_pos is not None:
+                delta = event.scenePos() - self._press_pos
+                moved = (abs(delta.x()) > 5 or abs(delta.y()) > 5)
+
+            if moved:
+                # This was a drag - snap to grid and update wire
+                self.snap_to_grid()
+                if self.parent_wire:
+                    self.parent_wire.update_wire_path()
+            else:
+                # This was a click - handle wire connection
+                main_window = self.scene().views()[0].main_window
+                main_window.on_junction_point_clicked(self)
+
+            self._press_pos = None
 
         super().mouseReleaseEvent(event)
 
-        if event.button() == Qt.MouseButton.LeftButton:
-            moved = False
-            if was_dragging and self._press_scene_pos is not None:
-                delta = event.scenePos() - self._press_scene_pos
-                moved = (abs(delta.x()) > 2 or abs(delta.y()) > 2)
-            if moved:
-                self.snap_to_grid()
-                self._update_connected_wires_async()
-            else:
-                # Treat as click when no significant movement
-                main_window = self.scene().views()[0].main_window
-                main_window.on_junction_point_clicked(self)
-        self._press_scene_pos = None
-
     def itemChange(self, change, value):
-        """Keep wires in sync while item moves and prevent move when not dragging."""
-        if change == QGraphicsEllipseItem.GraphicsItemChange.ItemPositionChange:
-            # Allow move if dragging OR if programmatically moved by wire
-            if not self.dragging and not self._allow_programmatic_move:
-                # Cancel position changes when not in a deliberate drag
-                return self.pos()
-            # While dragging, schedule wire updates
-            if self.dragging:
-                self._update_connected_wires_async()
+        """Handle position changes during dragging"""
+        if change == QGraphicsEllipseItem.GraphicsItemChange.ItemPositionChange and self.dragging:
+            # Update wire path during drag
+            if self.parent_wire and self.scene():
+                # Schedule update after position change is complete
+                QTimer.singleShot(0, self.parent_wire.update_wire_path)
+
         return super().itemChange(change, value)
 
-    def _update_connected_wires_async(self):
-        # Schedule wire updates to run after the current event completes
-        if not self.connected_wires:
-            return
-        def do_update():
-            for w in list(self.connected_wires):
-                try:
-                    w.update_position()
-                except Exception:
-                    pass
-        QTimer.singleShot(0, do_update)
-
     def snap_to_grid(self):
-        """Snap junction to nearest grid intersection"""
+        """Snap junction point to nearest grid intersection"""
+        # Get grid spacing from the graphics view
         scene = self.scene()
         if scene and scene.views():
             view = scene.views()[0]
             if hasattr(view, 'grid_spacing'):
-                g = view.grid_spacing
-                p = self.pos()
-                self.setPos(round(p.x() / g) * g, round(p.y() / g) * g)
+                grid_spacing = view.grid_spacing
+                pos = self.pos()
+
+                # Calculate nearest grid position
+                grid_x = round(pos.x() / grid_spacing) * grid_spacing
+                grid_y = round(pos.y() / grid_spacing) * grid_spacing
+                self.setPos(grid_x, grid_y)
 
     def hoverEnterEvent(self, event):
-        self.setBrush(QBrush(QColor(100, 100, 100)))  # Gray on hover
+        self.setBrush(QBrush(QColor(80, 80, 80)))  # Lighter gray on hover
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):

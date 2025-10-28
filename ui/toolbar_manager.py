@@ -13,7 +13,6 @@ class ToolbarManager(QObject):
     save_requested = pyqtSignal()
     save_copy_requested = pyqtSignal()
     run_requested = pyqtSignal()
-    stop_requested = pyqtSignal()
 
     # Additional action signals
     undo_requested = pyqtSignal()
@@ -64,10 +63,6 @@ class ToolbarManager(QObject):
         self.actionRun.setShortcut(QKeySequence("F5"))
         self.actionRun.setToolTip("Start simulation (F5)")
 
-        self.actionStop = QAction("Stop", self.main_window)
-        self.actionStop.setShortcut(QKeySequence("Shift+F5"))
-        self.actionStop.setToolTip("Stop simulation (Shift+F5)")
-
         # Undo/Redo actions
         self.actionUndo = QAction("Undo", self.main_window)
         self.actionUndo.setShortcut(QKeySequence.StandardKey.Undo)
@@ -85,7 +80,6 @@ class ToolbarManager(QObject):
         self.actionUndo.triggered.connect(self.undo_requested.emit)
         self.actionRedo.triggered.connect(self.redo_requested.emit)
         self.actionRun.triggered.connect(self.run_requested.emit)
-        self.actionStop.triggered.connect(self.stop_requested.emit)
 
         # Register actions with quick access toolbar
         # Default pinned: New, Open, Save, Run, Undo, Redo
@@ -96,7 +90,6 @@ class ToolbarManager(QObject):
         self.toolbar.register_action(self.actionUndo, "Undo")
         self.toolbar.register_action(self.actionRedo, "Redo")
         self.toolbar.register_action(self.actionRun, "Run")
-        self.toolbar.register_action(self.actionStop, "Stop")
 
     def setup_additional_shortcuts(self):
         """Setup additional keyboard shortcuts"""

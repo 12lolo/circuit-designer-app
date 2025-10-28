@@ -7,6 +7,7 @@ class SimulationOutputPanel(QGroupBox):
 
     copy_output_requested = pyqtSignal()
     node_clicked = pyqtSignal(str)  # Signal emitted when a node name is clicked
+    led_clicked = pyqtSignal(str)   # Signal emitted when an LED name is clicked
 
     def __init__(self):
         super().__init__("Simulation Output")
@@ -48,12 +49,16 @@ class SimulationOutputPanel(QGroupBox):
         )
 
     def _on_anchor_clicked(self, url: QUrl):
-        """Handle clicks on node name links"""
-        node_name = url.toString()
-        if node_name.startswith('node:'):
+        """Handle clicks on node name and LED links"""
+        url_str = url.toString()
+        if url_str.startswith('node:'):
             # Extract the actual node name (e.g., "node:1/voltage_source" -> "1/voltage_source")
-            actual_node = node_name[5:]  # Remove "node:" prefix
+            actual_node = url_str[5:]  # Remove "node:" prefix
             self.node_clicked.emit(actual_node)
+        elif url_str.startswith('led:'):
+            # Extract the actual LED name (e.g., "led:led1" -> "led1")
+            actual_led = url_str[4:]  # Remove "led:" prefix
+            self.led_clicked.emit(actual_led)
 
     # Helpers
     def clear_output(self):

@@ -198,14 +198,24 @@ class MultiDeleteCommand(QUndoCommand):
 
     def redo(self):
         """Remove all items"""
+        from components.wire import Wire
+
         for item, wires in self.items_data:
             # Remove wires first
             for wire in wires:
                 if wire.scene() == self.scene:
-                    self.scene.removeItem(wire)
+                    # Use wire's delete method to properly clean up segments and bend points
+                    if isinstance(wire, Wire):
+                        wire.delete_wire()
+                    else:
+                        self.scene.removeItem(wire)
             # Remove item
             if item.scene() == self.scene:
-                self.scene.removeItem(item)
+                # If item is a wire, use its delete method for proper cleanup
+                if isinstance(item, Wire):
+                    item.delete_wire()
+                else:
+                    self.scene.removeItem(item)
 
     def undo(self):
         """Restore all items"""

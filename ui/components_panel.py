@@ -42,14 +42,14 @@ class ComponentsPanel(QGroupBox):
         self.btnVdc = DraggableButton("Vdc", "Vdc", 1, 1)  # 1x1 grid cell
         self.btnGnd = DraggableButton("GND", "GND", 1, 1)  # 1x1 grid cell
         self.btnSwitch = DraggableButton("Switch", "Switch", 2, 1)  # 2x1 grid cells
-        self.btnLight = DraggableButton("Light", "Light", 1, 1)  # 1x1 grid cell
+        self.btnLED = DraggableButton("LED", "LED", 2, 1)  # 2x1 grid cells (has two terminals)
 
         # Add buttons to layout
         self.verticalLayout_buttons.addWidget(self.btnResistor)
         self.verticalLayout_buttons.addWidget(self.btnVdc)
         self.verticalLayout_buttons.addWidget(self.btnGnd)
         self.verticalLayout_buttons.addWidget(self.btnSwitch)
-        self.verticalLayout_buttons.addWidget(self.btnLight)
+        self.verticalLayout_buttons.addWidget(self.btnLED)
 
     def addComponent(self, name, display_name, width, height):
         """Add a new component button to the panel"""

@@ -74,7 +74,6 @@ class ShortcutsDialog(QDialog):
 
         # Simulation
         "Run Simulation": "F5",
-        "Stop Simulation": "Shift+F5",
         "Copy Output": "Ctrl+Shift+C",
     }
 
@@ -83,7 +82,7 @@ class ShortcutsDialog(QDialog):
         "File": ["New", "Open", "Save", "Save Copy", "Export PNG"],
         "Edit": ["Undo", "Redo", "Copy", "Paste", "Select All", "Deselect All"],
         "View": ["Zoom In", "Zoom Out", "Reset Zoom", "Center View", "Focus Canvas", "Clear Log"],
-        "Simulation": ["Run Simulation", "Stop Simulation", "Copy Output"],
+        "Simulation": ["Run Simulation", "Copy Output"],
     }
 
     def __init__(self, toolbar_manager, parent=None):
@@ -262,7 +261,6 @@ class ShortcutsDialog(QDialog):
             "Save": self.toolbar_manager.actionOpslaan,
             "Save Copy": self.toolbar_manager.actionSaveCopy,
             "Run Simulation": self.toolbar_manager.actionRun,
-            "Stop Simulation": self.toolbar_manager.actionStop,
             "Undo": self.toolbar_manager.actionUndo,
             "Redo": self.toolbar_manager.actionRedo,
             "Copy": self.toolbar_manager.actionCopy,
