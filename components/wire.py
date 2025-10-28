@@ -144,11 +144,13 @@ class Wire(QGraphicsLineItem):
         # Add to scene
         if self.scene():
             self.scene().addItem(junction)
+            # Snap junction to grid immediately after adding to scene
+            junction.snap_to_grid()
 
         # Log the action using the new log panel
         main_window = self.scene().views()[0].main_window
         if hasattr(main_window, 'log_panel'):
-            main_window.log_panel.log_message(f"[INFO] Junction point added to wire")
+            main_window.log_panel.log_message(f"[INFO] Junction point added to wire at grid position")
 
     def delete_wire(self):
         """Delete this wire and clean up connections"""
@@ -244,3 +246,81 @@ class Wire(QGraphicsLineItem):
             end_pos = self.end_point.get_scene_pos()
             self.setLine(start_pos.x(), start_pos.y(), end_pos.x(), end_pos.y())
             self.show()  # Make sure main line is visible for straight wires
+
+        # Update junction points to stay at wire midpoint
+        self._update_junction_positions()
+
+    def _update_junction_positions(self):
+        """Update all junction points on this wire to their correct positions"""
+        if not self.junction_points:
+            return
+
+        # For straight wires (no bend points), junctions stay at midpoint
+        if not self.bend_points:
+            line = self.line()
+            midpoint = QPointF((line.x1() + line.x2()) / 2, (line.y1() + line.y2()) / 2)
+
+            for junction in self.junction_points:
+                # Store old position to check if it changed
+                old_pos = junction.pos()
+
+                # Allow programmatic position update
+                if hasattr(junction, '_allow_programmatic_move'):
+                    junction._allow_programmatic_move = True
+
+                junction.setPos(midpoint)
+
+                # Snap to grid
+                if hasattr(junction, 'snap_to_grid'):
+                    junction.snap_to_grid()
+
+                # Disable programmatic move flag
+                if hasattr(junction, '_allow_programmatic_move'):
+                    junction._allow_programmatic_move = False
+
+                # Update other wires connected to this junction if position changed
+                new_pos = junction.pos()
+                if (abs(new_pos.x() - old_pos.x()) > 0.1 or abs(new_pos.y() - old_pos.y()) > 0.1):
+                    if hasattr(junction, 'connected_wires'):
+                        for wire in junction.connected_wires:
+                            if wire is not self:  # Don't update ourselves
+                                try:
+                                    wire.update_position()
+                                except:
+                                    pass
+        else:
+            # For wires with bend points, update junctions to nearest segment midpoint
+            # For simplicity, place all junctions at the overall midpoint
+            # (A more sophisticated approach would maintain relative positions on segments)
+            start_pos = self.start_point.get_scene_pos()
+            end_pos = self.end_point.get_scene_pos()
+            midpoint = QPointF((start_pos.x() + end_pos.x()) / 2, (start_pos.y() + end_pos.y()) / 2)
+
+            for junction in self.junction_points:
+                # Store old position
+                old_pos = junction.pos()
+
+                # Allow programmatic position update
+                if hasattr(junction, '_allow_programmatic_move'):
+                    junction._allow_programmatic_move = True
+
+                junction.setPos(midpoint)
+
+                # Snap to grid
+                if hasattr(junction, 'snap_to_grid'):
+                    junction.snap_to_grid()
+
+                # Disable programmatic move flag
+                if hasattr(junction, '_allow_programmatic_move'):
+                    junction._allow_programmatic_move = False
+
+                # Update other wires connected to this junction if position changed
+                new_pos = junction.pos()
+                if (abs(new_pos.x() - old_pos.x()) > 0.1 or abs(new_pos.y() - old_pos.y()) > 0.1):
+                    if hasattr(junction, 'connected_wires'):
+                        for wire in junction.connected_wires:
+                            if wire is not self:  # Don't update ourselves
+                                try:
+                                    wire.update_position()
+                                except:
+                                    pass

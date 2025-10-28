@@ -127,10 +127,20 @@ class CircuitGridTransformer:
         """Replace the connection coordinates with the names of the components."""
         coordinate_to_name = {data['coordinate']: name for name, data in self.circuit_grid.items()}
 
-        for _, component_data in self.circuit_grid.items():
+        for component_name, component_data in self.circuit_grid.items():
             connections_by_name = []
 
             for connection_coordinate in component_data['connections']:
+                # Ensure coordinate is a tuple
+                if isinstance(connection_coordinate, list):
+                    connection_coordinate = tuple(connection_coordinate)
+
+                # Check if coordinate exists in mapping
+                if connection_coordinate not in coordinate_to_name:
+                    print(f"WARNING: Component '{component_name}' at {component_data['coordinate']} has connection to {connection_coordinate} which doesn't exist in circuit")
+                    print(f"Available coordinates: {list(coordinate_to_name.keys())}")
+                    continue  # Skip invalid connection
+
                 connections_by_name.append(coordinate_to_name[connection_coordinate])
             component_data['connections'] = connections_by_name
 

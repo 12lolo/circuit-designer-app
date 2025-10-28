@@ -191,6 +191,9 @@ class ComponentItem(QGraphicsRectItem):
     def mousePressEvent(self, event):
         # Handle selection
         if event.button() == Qt.MouseButton.LeftButton:
+            # Store position for undo/redo when dragging starts
+            self._drag_start_pos = self.pos()
+
             # Clear other selections first
             scene = self.scene()
             if scene:
@@ -299,6 +302,26 @@ class ComponentItem(QGraphicsRectItem):
                         self.move_to_grid_position(gx, gy)
                         if hasattr(main_window, 'log_panel'):
                             main_window.log_panel.log_message(f"[WARN] Component moved to free grid point {free_pos} to avoid overlap")
+
+            # Create undo command if position changed
+            if hasattr(self, '_drag_start_pos') and self._drag_start_pos is not None:
+                new_pos = self.pos()
+                # Check if position actually changed (tolerance for floating point)
+                if (abs(new_pos.x() - self._drag_start_pos.x()) > 0.1 or
+                    abs(new_pos.y() - self._drag_start_pos.y()) > 0.1):
+                    # Create move command
+                    if hasattr(main_window, 'undo_stack'):
+                        from ui.undo_commands import MoveComponentCommand
+                        command = MoveComponentCommand(
+                            self,
+                            self._drag_start_pos,
+                            new_pos,
+                            f"Move {self.component_type}"
+                        )
+                        main_window.undo_stack.push(command)
+                # Clear stored position
+                self._drag_start_pos = None
+
         # Update all connected wires
         self.update_connected_wires()
         super().mouseReleaseEvent(event)

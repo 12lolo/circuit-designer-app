@@ -68,6 +68,9 @@ class MainWindow(QMainWindow):
         # Backend simulator for PySpice integration
         self.backend_simulator = BackendSimulator()
 
+        # Store component name mapping from last simulation
+        self.component_name_mapping = {}
+
         # Clipboard for copy/paste
         self.clipboard_data = None
 
@@ -902,6 +905,10 @@ class MainWindow(QMainWindow):
             output_lines = ["=== PySpice Simulation Results ===", ""]
 
             if result['success']:
+                # Store component name mapping for node selection
+                if 'component_name_mapping' in result:
+                    self.component_name_mapping = result['component_name_mapping']
+
                 # Display results using HTML formatting for clickable node names
                 html_lines = ["<pre style='font-family: monospace; font-size: 12px;'>"]
                 html_lines.append("=== PySpice Simulation Results ===\n")
@@ -1204,8 +1211,9 @@ class MainWindow(QMainWindow):
                     elif rotation_diff < -180:
                         rotation_diff += 360
 
-                    # Apply the rotation
-                    self.selected_component.rotate_component(rotation_diff)
+                    # Apply the rotation with undo support
+                    command = RotateComponentCommand(self.selected_component, rotation_diff, f"Rotate {self.selected_component.component_type}")
+                    self.undo_stack.push(command)
 
             # Update component-specific values
             comp_type = self.selected_component.component_type
@@ -1541,21 +1549,11 @@ class MainWindow(QMainWindow):
         """Find components in the scene that match a backend component name"""
         components = []
 
-        for item in self.scene.items():
-            if hasattr(item, 'component_type'):
-                # Map component types to backend names
-                comp_type = item.component_type
-
-                # Check if this matches the backend name
-                if backend_name == 'voltage_source' and comp_type == 'Vdc':
-                    components.append(item)
-                elif backend_name.startswith('ground') and comp_type == 'GND':
-                    components.append(item)
-                elif backend_name.isdigit() and comp_type == 'Resistor':
-                    # For numbered components like '1', '2', '3' (resistors)
-                    # We'd need to track which resistor is which number
-                    # For now, accept all resistors as potential matches
-                    components.append(item)
+        # Use the stored mapping if available
+        if backend_name in self.component_name_mapping:
+            component = self.component_name_mapping[backend_name]
+            if component in self.scene.items():
+                components.append(component)
 
         return components
 

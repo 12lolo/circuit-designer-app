@@ -66,7 +66,7 @@ class BackendSimulator:
 
         return number
 
-    def scene_to_grid(self, scene: QGraphicsScene, grid_spacing: float = 40) -> Dict:
+    def scene_to_grid(self, scene: QGraphicsScene, grid_spacing: float = 40) -> tuple:
         """
         Convert PyQt6 scene to circuit_grid format for backend
 
@@ -75,7 +75,7 @@ class BackendSimulator:
             grid_spacing: Grid spacing in pixels
 
         Returns:
-            circuit_grid dictionary
+            Tuple of (circuit_grid dictionary, component_name_mapping dictionary)
         """
         self.grid_spacing = grid_spacing
         circuit_grid = {}
@@ -123,6 +123,9 @@ class BackendSimulator:
 
         # Initialize counters for component naming
         name_counters = {}
+
+        # Store mapping from backend component name to scene component object
+        component_name_mapping = {}
 
         # First, find all ground components
         ground_coords = []
@@ -177,6 +180,9 @@ class BackendSimulator:
             # Generate simple component name
             component_name = self._generate_component_name(backend_type, name_counters)
 
+            # Store mapping from backend name to scene component
+            component_name_mapping[component_name] = component
+
             circuit_grid[component_name] = {
                 'coordinate': coord,  # Already integer tuple from _get_grid_coord
                 'type': backend_type,
@@ -193,7 +199,19 @@ class BackendSimulator:
             if comp_data['type'] != 'wire':  # Only actual components
                 component_coords.add(tuple(comp_data['coordinate']) if isinstance(comp_data['coordinate'], list) else comp_data['coordinate'])
 
-        # Add junction points as splitwires (but skip ones at component locations)
+        # First pass: collect all junction coordinates (for validation)
+        junction_coords = set()
+        for junction in junctions:
+            if hasattr(junction, 'snap_to_grid'):
+                junction.snap_to_grid()
+            coord = self._get_grid_coord(junction.scenePos())
+            if coord not in component_coords:  # Only count if not overlapping a component
+                junction_coords.add(coord)
+
+        # All valid coordinates in the circuit
+        all_valid_coords = component_coords | junction_coords
+
+        # Second pass: add junction points as splitwires (but skip ones at component locations)
         node_counter = 0
         for idx, junction in enumerate(junctions):
             coord = self._get_grid_coord(junction.scenePos())
@@ -204,15 +222,31 @@ class BackendSimulator:
 
             # Find connections as coordinates (tuples), mapped to component coordinates
             connections = self._find_junction_connections(junction, wires, components, junctions, terminal_to_component)
-            # Ensure connections are integer tuples
-            connections = [(int(round(c[0])), int(round(c[1]))) if isinstance(c, (list, tuple)) else c for c in connections]
+
+            # Ensure connections are integer tuples and filter out invalid ones
+            valid_connections = []
+            for c in connections:
+                if isinstance(c, (list, tuple)):
+                    c = (int(round(c[0])), int(round(c[1])))
+                # Skip self-connections
+                if c == coord:
+                    continue
+                # Only include connections to coordinates that exist in the circuit
+                if c not in all_valid_coords:
+                    print(f"WARNING: Junction at {coord} has connection to {c} which doesn't exist in circuit")
+                    continue
+                valid_connections.append(c)
+
+            # Only add junction if it has valid connections
+            if not valid_connections:
+                continue
 
             node_counter += 1
             junction_name = f"node{node_counter}"
             circuit_grid[junction_name] = {
                 'coordinate': coord,  # already integer tuple from _get_grid_coord
                 'type': 'splitwire',
-                'connections': connections
+                'connections': valid_connections
             }
 
         # Add wires with connections mapped to component coordinates
@@ -244,7 +278,7 @@ class BackendSimulator:
                 'connections': [start_component_coord, end_component_coord]  # Use component coordinates
             }
 
-        return circuit_grid
+        return circuit_grid, component_name_mapping
 
     def _get_grid_coord(self, pos) -> tuple:
         """Convert scene position to grid coordinates as integer tuple"""
@@ -393,7 +427,7 @@ class BackendSimulator:
 
         try:
             # Convert scene to circuit grid
-            circuit_grid = self.scene_to_grid(scene, grid_spacing)
+            circuit_grid, component_name_mapping = self.scene_to_grid(scene, grid_spacing)
 
             if not circuit_grid:
                 return {
@@ -444,7 +478,8 @@ class BackendSimulator:
                 'results': results,
                 'circuit_grid': transformer.circuit_grid,
                 'netlist': netlist_str,
-                'debug_info': debug_info
+                'debug_info': debug_info,
+                'component_name_mapping': component_name_mapping
             }
 
         except Exception as e:

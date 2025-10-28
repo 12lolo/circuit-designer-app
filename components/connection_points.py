@@ -103,6 +103,7 @@ class JunctionPoint(QGraphicsEllipseItem):
         self.connected_wires = []
         self.dragging = False
         self._press_scene_pos = None
+        self._allow_programmatic_move = False  # Flag to allow wire updates
 
         # Set position
         self.setPos(position)
@@ -172,11 +173,13 @@ class JunctionPoint(QGraphicsEllipseItem):
     def itemChange(self, change, value):
         """Keep wires in sync while item moves and prevent move when not dragging."""
         if change == QGraphicsEllipseItem.GraphicsItemChange.ItemPositionChange:
-            if not self.dragging:
+            # Allow move if dragging OR if programmatically moved by wire
+            if not self.dragging and not self._allow_programmatic_move:
                 # Cancel position changes when not in a deliberate drag
                 return self.pos()
             # While dragging, schedule wire updates
-            self._update_connected_wires_async()
+            if self.dragging:
+                self._update_connected_wires_async()
         return super().itemChange(change, value)
 
     def _update_connected_wires_async(self):
@@ -279,3 +282,9 @@ class ConnectionPoint(QGraphicsEllipseItem):
     def get_scene_pos(self):
         """Get the absolute position of this connection point in scene coordinates"""
         return self.mapToScene(0, 0)
+
+    def update_connected_wires(self):
+        """Update all wires connected to this connection point"""
+        for wire in self.connected_wires:
+            if hasattr(wire, 'update_position'):
+                wire.update_position()
