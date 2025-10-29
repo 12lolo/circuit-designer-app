@@ -1,6 +1,7 @@
 """
-Components package for ECis-full application.
-Contains all graphical components and UI elements.
+Circuit Designer Components Package
+
+Contains all graphical components for the circuit designer.
 """
 
 from .wire import Wire

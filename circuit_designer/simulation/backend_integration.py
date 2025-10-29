@@ -2,12 +2,12 @@
 
 from typing import Dict, List, Optional
 from PyQt6.QtWidgets import QGraphicsScene
-from components import Wire, ComponentItem
+from circuit_designer.components import Wire, ComponentItem
 import re
 
 # Try to import PySpice
 try:
-    from components.core import CircuitGridTransformer, format_output
+    from circuit_designer.components.core import CircuitGridTransformer, format_output
     PYSPICE_AVAILABLE = True
     PYSPICE_ERROR = None
 except ImportError as e:

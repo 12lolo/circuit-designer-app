@@ -2,7 +2,7 @@
 
 from PyQt6.QtGui import QUndoCommand
 from PyQt6.QtCore import QPointF
-from components import ComponentItem, Wire
+from circuit_designer.components import ComponentItem, Wire
 
 
 class AddComponentCommand(QUndoCommand):
@@ -145,6 +145,16 @@ class AddWireCommand(QUndoCommand):
         if hasattr(self.end_point, 'connected_wires') and self.wire not in self.end_point.connected_wires:
             self.end_point.connected_wires.append(self.wire)
 
+        # Restore bend points if they exist
+        if hasattr(self.wire, 'bend_points'):
+            for bend_point in self.wire.bend_points:
+                if bend_point.scene() != self.scene:
+                    self.scene.addItem(bend_point)
+
+        # Recreate wire segments if wire has bend points
+        if hasattr(self.wire, 'update_wire_path'):
+            self.wire.update_wire_path()
+
     def undo(self):
         """Remove wire from scene"""
         # Unregister from connection points
@@ -153,6 +163,19 @@ class AddWireCommand(QUndoCommand):
         if hasattr(self.end_point, 'connected_wires') and self.wire in self.end_point.connected_wires:
             self.end_point.connected_wires.remove(self.wire)
 
+        # Remove bend points
+        if hasattr(self.wire, 'bend_points'):
+            for bend_point in self.wire.bend_points:
+                if bend_point.scene() == self.scene:
+                    self.scene.removeItem(bend_point)
+
+        # Remove wire segments
+        if hasattr(self.wire, 'wire_segments'):
+            for segment in self.wire.wire_segments:
+                if segment.scene() == self.scene:
+                    self.scene.removeItem(segment)
+
+        # Remove main wire
         if self.wire.scene() == self.scene:
             self.scene.removeItem(self.wire)
 
@@ -175,6 +198,19 @@ class DeleteWireCommand(QUndoCommand):
         if hasattr(self.end_point, 'connected_wires') and self.wire in self.end_point.connected_wires:
             self.end_point.connected_wires.remove(self.wire)
 
+        # Remove bend points
+        if hasattr(self.wire, 'bend_points'):
+            for bend_point in self.wire.bend_points:
+                if bend_point.scene() == self.scene:
+                    self.scene.removeItem(bend_point)
+
+        # Remove wire segments
+        if hasattr(self.wire, 'wire_segments'):
+            for segment in self.wire.wire_segments:
+                if segment.scene() == self.scene:
+                    self.scene.removeItem(segment)
+
+        # Remove main wire
         if self.wire.scene() == self.scene:
             self.scene.removeItem(self.wire)
 
@@ -187,6 +223,16 @@ class DeleteWireCommand(QUndoCommand):
         if hasattr(self.end_point, 'connected_wires') and self.wire not in self.end_point.connected_wires:
             self.end_point.connected_wires.append(self.wire)
 
+        # Restore bend points
+        if hasattr(self.wire, 'bend_points'):
+            for bend_point in self.wire.bend_points:
+                if bend_point.scene() != self.scene:
+                    self.scene.addItem(bend_point)
+
+        # Recreate wire segments
+        if hasattr(self.wire, 'update_wire_path'):
+            self.wire.update_wire_path()
+
 
 class MultiDeleteCommand(QUndoCommand):
     """Command for deleting multiple items at once"""
@@ -198,7 +244,7 @@ class MultiDeleteCommand(QUndoCommand):
 
     def redo(self):
         """Remove all items"""
-        from components.wire import Wire
+        from circuit_designer.components.wire import Wire
 
         for item, wires in self.items_data:
             # Remove wires first
@@ -219,9 +265,24 @@ class MultiDeleteCommand(QUndoCommand):
 
     def undo(self):
         """Restore all items"""
+        from circuit_designer.components.wire import Wire
+
         for item, wires in self.items_data:
             # Restore item
             self.scene.addItem(item)
-            # Restore wires
+
+            # Restore wires with proper bend point and segment handling
             for wire in wires:
                 self.scene.addItem(wire)
+
+                # If wire is a Wire instance, restore bend points and segments
+                if isinstance(wire, Wire):
+                    # Restore bend points
+                    if hasattr(wire, 'bend_points'):
+                        for bend_point in wire.bend_points:
+                            if bend_point.scene() != self.scene:
+                                self.scene.addItem(bend_point)
+
+                    # Recreate wire segments
+                    if hasattr(wire, 'update_wire_path'):
+                        wire.update_wire_path()

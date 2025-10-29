@@ -9,29 +9,32 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QPointF, QSettings, QEvent, QTimer, QRectF
 from PyQt6.QtGui import QPen, QColor, QUndoStack, QBrush, QImage, QPainter
 
-from components import (
+from circuit_designer.components import (
     Wire, ComponentItem, DroppableGraphicsView
 )
-from components.connection_points import ConnectionPoint
+from circuit_designer.components.connection_points import ConnectionPoint
 
 # Import the new UI components
-from ui.components_panel import ComponentsPanel
-from ui.inspect_panel import InspectPanel
-from ui.toolbar_manager import ToolbarManager
-from ui.simulation_engine import SimulationEngine
-from ui.canvas_tools import CanvasTools
-from ui.log_panel import LogPanel
-from ui.sim_output_panel import SimulationOutputPanel
-from ui.project_manager import ProjectManager
-from ui.project_browser import ProjectBrowserDialog
-from ui.netlist_builder import NetlistBuilder
-from ui.shortcuts_dialog import ShortcutsDialog
-from ui.undo_commands import (
+from circuit_designer.ui.panels.components_panel import ComponentsPanel
+from circuit_designer.ui.panels.inspect_panel import InspectPanel
+from circuit_designer.ui.managers.toolbar_manager import ToolbarManager
+from circuit_designer.simulation.simulation_engine import SimulationEngine
+from circuit_designer.utils.canvas_tools import CanvasTools
+from circuit_designer.ui.panels.log_panel import LogPanel
+from circuit_designer.ui.panels.sim_output_panel import SimulationOutputPanel
+from circuit_designer.project.project_manager import ProjectManager
+from circuit_designer.ui.panels.project_browser import ProjectBrowserDialog
+from circuit_designer.simulation.netlist_builder import NetlistBuilder
+from circuit_designer.ui.dialogs.shortcuts_dialog import ShortcutsDialog
+from circuit_designer.project.undo_commands import (
     AddComponentCommand, DeleteComponentCommand, MoveComponentCommand,
     RotateComponentCommand, AddWireCommand, DeleteWireCommand, MultiDeleteCommand
 )
-from ui.quick_access_toolbar import make_menu_pinnable
-from ui.backend_integration import BackendSimulator
+from circuit_designer.ui.managers.quick_access_toolbar import make_menu_pinnable
+from circuit_designer.simulation.backend_integration import BackendSimulator
+from circuit_designer.core.managers import (
+    CanvasManager, ComponentManager, WireManager, SelectionManager
+)
 
 
 class MainWindow(QMainWindow):
@@ -78,6 +81,13 @@ class MainWindow(QMainWindow):
 
         self.setupUi()
 
+        # Initialize managers (after UI setup so they have access to components)
+        self.canvas_manager = None
+        self.component_manager = None
+        self.wire_manager = None
+        self.selection_manager = None
+        self._initialize_managers()
+
         # Enable focus for keyboard events
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
@@ -120,8 +130,51 @@ class MainWindow(QMainWindow):
         self.mainVerticalSplitter.setStretchFactor(1, 1)
 
         # After full UI init, normalize connection points (in case of hot reload / persisted state)
-        if hasattr(self, 'refresh_all_component_connection_points'):
-            self.refresh_all_component_connection_points()
+        if hasattr(self, 'component_manager') and self.component_manager:
+            self.component_manager.refresh_all_connection_points()
+
+    def _initialize_managers(self):
+        """Initialize all manager classes"""
+        # Canvas manager for viewport and grid operations
+        self.canvas_manager = CanvasManager(
+            self.graphicsViewSandbox,
+            self.scene,
+            self.log_panel
+        )
+
+        # Component manager for component operations
+        self.component_manager = ComponentManager(
+            self.scene,
+            self.graphicsViewSandbox,
+            self.inspect_panel,
+            self.log_panel,
+            self.undo_stack,
+            self.backend_simulator
+        )
+
+        # Wire manager for wire creation and connections
+        self.wire_manager = WireManager(
+            self.scene,
+            self.inspect_panel,
+            self.log_panel,
+            self.undo_stack
+        )
+
+        # Selection manager for selection and copy/paste
+        self.selection_manager = SelectionManager(
+            self.scene,
+            self.graphicsViewSandbox,
+            self.inspect_panel,
+            self.log_panel,
+            self.undo_stack
+        )
+
+        # Draw grid now that canvas manager is initialized
+        self.canvas_manager.draw_grid()
+
+        # Set floating controls reference in canvas manager
+        if self._floating_controls:
+            self.canvas_manager.set_floating_controls(self._floating_controls)
 
     def setupComponentsSection(self):
         """Setup the Components (Componenten) section"""
@@ -149,8 +202,7 @@ class MainWindow(QMainWindow):
         # Initialize simulation engine
         self.simulation_engine = SimulationEngine(self.graphicsViewSandbox)
 
-        # Draw grid
-        self.drawGrid()
+        # Note: Grid will be drawn after managers are initialized
 
         # Connect canvas tool signals (zoom in/out + probe retained)
         self.canvas_tools.zoom_in_requested.connect(self.on_zoom_in)
@@ -178,24 +230,8 @@ class MainWindow(QMainWindow):
 
     def _position_floating_controls(self):
         """Place floating controls at a corner inside the canvas viewport, based on its current anchor."""
-        if self._floating_controls is None:
-            return
-        try:
-            # Prefer anchor-based repositioning if available (draggable snapping)
-            if hasattr(self._floating_controls, 'reposition_to_anchor'):
-                # Ensure size hint is realized before computing anchor positions
-                self._floating_controls.adjustSize()
-                self._floating_controls.reposition_to_anchor()
-                return
-        except Exception:
-            pass
-        # Fallback: top-left margin
-        margin_x = 10
-        margin_y = 10
-        self._floating_controls.adjustSize()
-        self._floating_controls.move(margin_x, margin_y)
-        self._floating_controls.raise_()
-        self._floating_controls.show()
+        if self.canvas_manager:
+            self.canvas_manager.position_floating_controls()
 
     def eventFilter(self, obj, event):
         # Reposition floating controls when the canvas viewport resizes
@@ -212,111 +248,9 @@ class MainWindow(QMainWindow):
             self._position_floating_controls()
 
     def drawGrid(self):
-        """Draw the grid on the graphics scene with an outer non-placeable border.
-        Visual grid: (placement_cells + 2) cells per side (adds 1 cell border on each side).
-        Placement grid (where components may snap/occupy): placement_cells per side (original 15).
-        Components are clamped to placement grid via graphicsViewSandbox.grid_rect.
-        """
-        # Configuration
-        placement_cells = 15
-        border_thickness_cells = 1  # one cell each side
-        visual_cells = placement_cells + 2 * border_thickness_cells
-
-        # Base scene dimension previously 1000x600 leading to blank space; derive spacing from a square target height
-        # Keep same spacing logic so internal cell size stable relative to previous behavior.
-        target_height = 600  # legacy vertical dimension baseline
-        grid_spacing = target_height / placement_cells  # cell size
-
-        # Dimensions
-        placement_width = placement_cells * grid_spacing
-        placement_height = placement_cells * grid_spacing
-        visual_width = visual_cells * grid_spacing
-        visual_height = visual_cells * grid_spacing
-
-        # Offsets (centered at origin). Placement rect inset by 1 cell within visual rect
-        placement_left = -placement_width / 2
-        placement_top = -placement_height / 2
-        visual_left = -visual_width / 2
-        visual_top = -visual_height / 2
-
-        # Clear ONLY previous grid lines (keep components if re-drawing). Detect by custom data flag.
-        for item in self.scene.items():
-            try:
-                if hasattr(item, 'data') and item.data(0) in ('grid', 'grid-border'):
-                    self.scene.removeItem(item)
-            except Exception:
-                pass
-
-        # Update graphics view spacing
-        self.graphicsViewSandbox.grid_spacing = grid_spacing
-
-        # Store placement bounds for snapping/clamping (used by components)
-        self.graphicsViewSandbox.grid_rect = (placement_left, placement_top, placement_width, placement_height)
-        # Store visual bounds (for potential future use like centering, limiting panning)
-        self.graphicsViewSandbox.visual_grid_rect = (visual_left, visual_top, visual_width, visual_height)
-
-        # Shrink scene rect to visual grid (minimal blank area)
-        self.scene.setSceneRect(visual_left, visual_top, visual_width, visual_height)
-
-        light_pen = QPen(QColor(220, 220, 220))
-        inner_border_pen = QPen(QColor(180, 180, 180))
-        outer_border_pen = QPen(QColor(80, 80, 80), 2)
-
-        # Helper to add line with tag
-        def add_line(x1, y1, x2, y2, pen):
-            line_item = self.scene.addLine(x1, y1, x2, y2, pen)
-            try:
-                line_item.setData(0, 'grid')
-            except Exception:
-                pass
-
-        # Draw full visual grid lines
-        for i in range(visual_cells + 1):  # lines count = cells + 1
-            x = visual_left + i * grid_spacing
-            pen = light_pen
-            # Vertical outer border
-            if i == 0 or i == visual_cells:
-                pen = outer_border_pen
-            # Placement border (inner ring) thicker/darker than inner lines
-            elif i == border_thickness_cells or i == visual_cells - border_thickness_cells:
-                pen = inner_border_pen
-            add_line(x, visual_top, x, visual_top + visual_height, pen)
-
-        for i in range(visual_cells + 1):
-            y = visual_top + i * grid_spacing
-            pen = light_pen
-            if i == 0 or i == visual_cells:
-                pen = outer_border_pen
-            elif i == border_thickness_cells or i == visual_cells - border_thickness_cells:
-                pen = inner_border_pen
-            add_line(visual_left, y, visual_left + visual_width, y, pen)
-
-        # Add shaded forbidden border rectangles
-        shaded_brush = QBrush(QColor(50, 50, 50, 40))
-        def add_shaded_rect(x, y, w, h):
-            rect_item = QGraphicsRectItem(x, y, w, h)
-            rect_item.setBrush(shaded_brush)
-            rect_item.setPen(QPen(Qt.PenStyle.NoPen))
-            rect_item.setZValue(-10)  # behind grid lines
-            rect_item.setData(0, 'grid-border')
-            self.scene.addItem(rect_item)
-        # Left border
-        add_shaded_rect(visual_left, visual_top, grid_spacing, visual_height)
-        # Right border
-        add_shaded_rect(placement_left + placement_width, visual_top, grid_spacing, visual_height)
-        # Top border
-        add_shaded_rect(visual_left + grid_spacing, visual_top, placement_width, grid_spacing)
-        # Bottom border
-        add_shaded_rect(visual_left + grid_spacing, placement_top + placement_height, placement_width, grid_spacing)
-
-        # Optional: subtle shaded overlay for forbidden border cells (visual only)
-        # (Skippable for now; can add semi-transparent rects if desired.)
-
-        # Center view on grid after redraw (preserve if user already working? keep simple now)
-        self.graphicsViewSandbox.centerOn(0, 0)
-        # Enforce new min zoom immediately
-        if hasattr(self.graphicsViewSandbox, 'update_min_zoom'):
-            self.graphicsViewSandbox.update_min_zoom()
+        """Draw the grid on the graphics scene - delegates to canvas_manager"""
+        if self.canvas_manager:
+            self.canvas_manager.draw_grid()
 
     def setupInspectSection(self):
         """Setup the Inspect section with Simulation Output beneath it"""
@@ -1050,98 +984,37 @@ class MainWindow(QMainWindow):
                 self.sim_output_panel.set_output("\n".join(output_lines))
 
     def on_zoom_in(self):
-        self.graphicsViewSandbox.scale(1.2, 1.2)
+        """Zoom in on the canvas"""
+        if self.canvas_manager:
+            self.canvas_manager.zoom_in()
 
     def on_zoom_out(self):
-        self.graphicsViewSandbox.scale(0.8, 0.8)
+        """Zoom out on the canvas"""
+        if self.canvas_manager:
+            self.canvas_manager.zoom_out()
 
     def on_zoom_reset(self):
         """Reset zoom to 1:1"""
-        self.graphicsViewSandbox.resetTransform()
-        # Enforce min zoom and clamp to grid after reset
-        if hasattr(self.graphicsViewSandbox, 'update_min_zoom'):
-            self.graphicsViewSandbox.update_min_zoom()
-        if hasattr(self.graphicsViewSandbox, 'clamp_view_to_visual_grid'):
-            self.graphicsViewSandbox.clamp_view_to_visual_grid()
+        if self.canvas_manager:
+            self.canvas_manager.zoom_reset()
 
     def on_center_view(self):
         """Center the view on the scene"""
-        self.graphicsViewSandbox.centerOn(0, 0)
-        self.log_panel.log_message("[INFO] View centered")
+        if self.canvas_manager:
+            self.canvas_manager.center_view()
 
     def on_probe(self):
         self.log_panel.log_message("[INFO] Probe activated")
 
     def on_copy(self):
         """Copy selected components to clipboard"""
-        selected_items = self.scene.selectedItems()
-        components_data = []
-
-        for item in selected_items:
-            if hasattr(item, 'component_type'):
-                # Store component data
-                components_data.append({
-                    "type": item.component_type,
-                    "name": getattr(item, 'name', item.component_type),
-                    "value": getattr(item, 'value', ''),
-                    "orientation": getattr(item, 'orientation', 0),
-                    "size_w": getattr(item, 'size_w', 1),
-                    "size_h": getattr(item, 'size_h', 1),
-                    "relative_pos": {"x": item.x(), "y": item.y()}
-                })
-
-        if components_data:
-            self.clipboard_data = components_data
-            self.log_panel.log_message(f"[INFO] Copied {len(components_data)} component(s)")
-        else:
-            self.log_panel.log_message("[INFO] No components selected to copy")
+        if self.selection_manager:
+            self.selection_manager.copy_selected()
 
     def on_paste(self):
         """Paste components from clipboard"""
-        if not self.clipboard_data:
-            self.log_panel.log_message("[INFO] Clipboard is empty")
-            return
-
-        # Calculate offset for pasted components (slight offset from originals)
-        offset_x = 40  # 1 grid cell
-        offset_y = 40
-
-        pasted_count = 0
-        for comp_data in self.clipboard_data:
-            try:
-                # Create new component
-                component = ComponentItem(
-                    comp_data["type"],
-                    comp_data["size_w"],
-                    comp_data["size_h"],
-                    self.graphicsViewSandbox.grid_spacing
-                )
-
-                # Set properties
-                component.name = comp_data["name"] + "_copy"
-                component.value = comp_data["value"]
-                component.orientation = comp_data["orientation"]
-
-                # Set position with offset
-                new_x = comp_data["relative_pos"]["x"] + offset_x
-                new_y = comp_data["relative_pos"]["y"] + offset_y
-                component.setPos(new_x, new_y)
-
-                # Apply rotation
-                if component.orientation:
-                    component.rotate_component(0)  # Triggers recreation with orientation
-
-                # Add to scene
-                self.scene.addItem(component)
-                component.snap_to_grid()
-
-                pasted_count += 1
-
-            except Exception as e:
-                self.log_panel.log_message(f"[ERROR] Failed to paste component: {e}")
-
-        if pasted_count > 0:
-            self.log_panel.log_message(f"[INFO] Pasted {pasted_count} component(s)")
+        if self.selection_manager:
+            self.selection_manager.paste()
 
     def on_copy_output_clicked(self):
         """Copy simulation output to clipboard"""
@@ -1155,17 +1028,17 @@ class MainWindow(QMainWindow):
 
     def on_select_all(self):
         """Select all items in the scene"""
-        for item in self.scene.items():
-            if hasattr(item, 'setSelected'):
-                item.setSelected(True)
-        self.log_panel.log_message("[INFO] All items selected")
+        if self.selection_manager:
+            self.selection_manager.select_all()
 
     def on_deselect_all(self):
         """Deselect all items"""
-        self.scene.clearSelection()
-        self.selected_component = None
-        self.inspect_panel.show_default_state()
-        self.log_panel.log_message("[INFO] Selection cleared")
+        if self.selection_manager:
+            self.selection_manager.deselect_all()
+        if self.component_manager:
+            self.component_manager.clear_selection()
+        if self.wire_manager:
+            self.wire_manager.reset_connection_state()
 
     def on_focus_canvas(self):
         """Set focus to the canvas"""
@@ -1231,296 +1104,55 @@ class MainWindow(QMainWindow):
 
     def on_inspect_field_changed(self):
         """Handle changes in inspect panel fields"""
-        if self.selected_component and hasattr(self.selected_component, 'component_type'):
-            # Update component properties based on inspect panel values
-            if hasattr(self.inspect_panel, 'editName') and self.inspect_panel.editName.isVisible():
-                self.selected_component.name = self.inspect_panel.editName.text()
-
-            # Handle orientation changes from the dropdown
-            if hasattr(self.inspect_panel, 'comboOrient') and self.inspect_panel.comboOrient.isVisible():
-                current_orientation_text = self.inspect_panel.comboOrient.currentText()
-                new_orientation = int(current_orientation_text.replace("°", ""))
-
-                # Only rotate if orientation actually changed
-                if new_orientation != self.selected_component.orientation:
-                    # Calculate the rotation difference
-                    rotation_diff = new_orientation - self.selected_component.orientation
-
-                    # Handle wrapping (e.g., from 270° to 0°)
-                    if rotation_diff > 180:
-                        rotation_diff -= 360
-                    elif rotation_diff < -180:
-                        rotation_diff += 360
-
-                    # Apply the rotation with undo support
-                    command = RotateComponentCommand(self.selected_component, rotation_diff, f"Rotate {self.selected_component.component_type}")
-                    self.undo_stack.push(command)
-
-            # Update component-specific values
-            comp_type = self.selected_component.component_type
-            if comp_type == "Resistor" and hasattr(self.inspect_panel, 'editResistance'):
-                if self.inspect_panel.editResistance.isVisible():
-                    self.selected_component.value = self.inspect_panel.editResistance.text()
-            elif comp_type == "Vdc" and hasattr(self.inspect_panel, 'editVoltage'):
-                if self.inspect_panel.editVoltage.isVisible():
-                    self.selected_component.value = self.inspect_panel.editVoltage.text()
-            elif comp_type == "Switch" and hasattr(self.inspect_panel, 'comboSwitchState'):
-                if self.inspect_panel.comboSwitchState.isVisible():
-                    self.selected_component.value = self.inspect_panel.comboSwitchState.currentText()
-            elif comp_type == "LED":
-                # Update LED threshold if changed
-                if hasattr(self.inspect_panel, 'editLEDThreshold') and self.inspect_panel.editLEDThreshold.isVisible():
-                    threshold_text = self.inspect_panel.editLEDThreshold.text()
-                    if threshold_text:
-                        # Parse threshold voltage
-                        threshold_value = self.backend_simulator.parse_value(threshold_text, 'LED')
-                        self.selected_component.led_threshold = threshold_value
-                # LED state is read-only, determined by circuit simulation
-                pass
+        if self.component_manager:
+            self.component_manager.on_inspect_field_changed()
 
     # Connection and selection handlers
     def on_connection_point_clicked(self, connection_point):
         """Handle click on a connection point with validation (no out->out)."""
-        self.log_panel.log_message(f"[INFO] Connection point {connection_point.point_id} clicked")
-        connection_point.highlight(True)
-
-        # Deselect previously highlighted last point if different
-        if hasattr(self, 'last_selected_point') and self.last_selected_point != connection_point:
-            self.last_selected_point.highlight(False)
-        self.last_selected_point = connection_point
-
-        # If this is the first point, store and wait for second
-        if not hasattr(self, 'first_selected_point'):
-            self.first_selected_point = connection_point
-            return
-
-        # If same point clicked twice, reset
-        if self.first_selected_point == connection_point:
-            connection_point.highlight(False)
-            del self.first_selected_point
-            del self.last_selected_point
-            return
-
-        # Validate connection
-        a = self.first_selected_point
-        b = connection_point
-        if not self.is_connection_allowed(a, b):
-            # Invalid connection: show warning, reset highlights
-            a.highlight(False)
-            b.highlight(False)
-            if hasattr(self, 'log_panel'):
-                # Determine specific error message
-                pid_a = getattr(a, 'point_id', '')
-                pid_b = getattr(b, 'point_id', '')
-                parent_a = getattr(a, 'parent_component', None)
-                parent_b = getattr(b, 'parent_component', None)
-
-                if parent_a is not None and parent_b is not None and parent_a is parent_b:
-                    self.log_panel.log_message("[WARN] Invalid connection: cannot connect a component to itself")
-                elif pid_a == 'out' and pid_b == 'out':
-                    self.log_panel.log_message("[WARN] Invalid connection: out -> out is not allowed")
-                else:
-                    self.log_panel.log_message("[WARN] Invalid connection")
-            del self.first_selected_point
-            del self.last_selected_point
-            return
-
-        # Create wire if valid (use undo command)
-        wire = Wire(a, b)
-        command = AddWireCommand(self.scene, wire, a, b, f"Connect Wire")
-        self.undo_stack.push(command)
-
-        a.highlight(False)
-        b.highlight(False)
-        if hasattr(self, 'log_panel'):
-            self.log_panel.log_message("[INFO] Wire connected")
-
-        del self.first_selected_point
-        del self.last_selected_point
-
+        if self.wire_manager:
+            self.wire_manager.on_connection_point_clicked(connection_point)
 
     def on_wire_selected(self, wire):
         """Handle wire selection"""
-        self.log_panel.log_message("[INFO] Wire selected")
-        self.inspect_panel.update_wire_data(wire)
+        if self.wire_manager:
+            self.wire_manager.on_wire_selected(wire)
 
     def check_position_conflict(self, component):
         """Return True if another component already occupies any grid cell of this component's footprint."""
-        if not hasattr(component, 'get_occupied_grid_cells'):
-            return False
-        footprint = component.get_occupied_grid_cells()
-        for item in self.scene.items():
-            if item is component:
-                continue
-            if hasattr(item, 'get_occupied_grid_cells'):
-                other_cells = item.get_occupied_grid_cells()
-                if footprint & other_cells:
-                    return True
+        if self.component_manager:
+            return self.component_manager.check_position_conflict(component)
         return False
 
     def find_free_grid_position(self, start_gpos, new_component):
-        """Find nearest anchor grid (gx, gy) so that the entire footprint (occupied cells)
-        does not overlap with existing components. Uses spiral search outwards from start.
-        start_gpos: (gx, gy) anchor grid coordinate (as per get_display_grid_position()).
-        Returns (gx, gy) or None if no free position found within bounds.
-        """
-        if not hasattr(new_component, 'get_occupied_grid_cells') or not hasattr(new_component, 'compute_effective_cell_dimensions'):
-            return None
-        if not hasattr(self.graphicsViewSandbox, 'grid_rect') or not self.graphicsViewSandbox.grid_rect:
-            return None
-        g_left, g_top, g_w, g_h = self.graphicsViewSandbox.grid_rect
-        g = self.graphicsViewSandbox.grid_spacing
-        # Convert scene coords to grid index range (using round consistent with snapping centers)
-        min_gx = int(round(g_left / g))
-        max_gx = int(round((g_left + g_w) / g))
-        min_gy = int(round(g_top / g))
-        max_gy = int(round((g_top + g_h) / g))
-
-        # Build occupied cell set of existing components
-        occupied = set()
-        for item in self.scene.items():
-            if item is new_component:
-                continue
-            if hasattr(item, 'get_occupied_grid_cells'):
-                occupied |= item.get_occupied_grid_cells()
-
-        start_x, start_y = start_gpos
-        eff_w, eff_h = new_component.compute_effective_cell_dimensions()
-
-        def footprint_free(ax, ay):
-            # Construct footprint at anchor (ax, ay)
-            cells = new_component.get_occupied_grid_cells(base_gx=ax, base_gy=ay)
-            # Boundaries: ensure each cell lies within grid index rectangle
-            for cx, cy in cells:
-                if cx < min_gx or cx > max_gx or cy < min_gy or cy > max_gy:
-                    return False
-            # Overlap check
-            return not (cells & occupied)
-
-        # Test start first
-        if footprint_free(start_x, start_y):
-            return start_x, start_y
-
-        # Spiral search
-        for radius in range(1, 40):
-            for dx in range(-radius, radius + 1):
-                for dy in range(-radius, radius + 1):
-                    if abs(dx) != radius and abs(dy) != radius:
-                        continue  # perimeter only
-                    ax = start_x + dx
-                    ay = start_y + dy
-                    if footprint_free(ax, ay):
-                        return ax, ay
+        """Find nearest free grid position for a component"""
+        if self.component_manager:
+            return self.component_manager.find_free_grid_position(start_gpos, new_component)
         return None
 
     def on_component_selected(self, component):
         """Handle component selection"""
         self.selected_component = component
-        self.inspect_panel.update_component_data(component)
-        self.log_panel.log_message(f"[INFO] {component.component_type} selected")
-
-        conflict = self.check_position_conflict(component)
-        if conflict and hasattr(self, 'log_panel'):
-            self.log_panel.log_message(f"[WARN] Position {component.get_display_grid_position()} already occupied")
+        if self.component_manager:
+            self.component_manager.on_component_selected(component)
 
     def delete_selected_components(self):
         """Delete selected components from the scene (with undo support)"""
-        from components.wire import Wire
-        from PyQt6.QtWidgets import QGraphicsLineItem
-
-        selected_items = self.scene.selectedItems()
-        if not selected_items:
-            return
-
-        # Collect items and their connected wires for undo
-        items_data = []
-        processed_wires = set()  # Track wires we've already processed
-
-        for item in selected_items:
-            # Skip direct deletion of raw connection points (they are owned by components)
-            if isinstance(item, ConnectionPoint):
-                continue
-
-            # If this is a wire segment, get the parent wire instead
-            if isinstance(item, QGraphicsLineItem) and hasattr(item, 'parent_wire'):
-                parent_wire = item.parent_wire
-                # Skip if we already processed this wire
-                if parent_wire in processed_wires:
-                    continue
-                processed_wires.add(parent_wire)
-                item = parent_wire
-
-            # Skip wires we've already processed
-            if isinstance(item, Wire) and item in processed_wires:
-                continue
-            if isinstance(item, Wire):
-                processed_wires.add(item)
-
-            connected_wires = []
-
-            # Collect connected wires for components
-            if hasattr(item, 'connection_points'):
-                for cp in item.connection_points:
-                    if hasattr(cp, 'connected_wires'):
-                        connected_wires.extend(cp.connected_wires.copy())
-
-            items_data.append((item, connected_wires))
-
-        if items_data:
-            # Create and execute multi-delete command
-            command = MultiDeleteCommand(self.scene, items_data, f"Delete {len(items_data)} item(s)")
-            self.undo_stack.push(command)
-
-            self.selected_component = None
-            self.inspect_panel.show_default_state()
-            self.log_panel.log_message(f"[INFO] {len(items_data)} item(s) deleted")
+        if self.selection_manager:
+            deleted = self.selection_manager.delete_selected()
+            if deleted:
+                self.selected_component = None
 
     def refresh_all_component_connection_points(self):
         """Rebuild connection points for all components to adopt latest positioning logic."""
-        for item in self.scene.items():
-            if isinstance(item, ComponentItem):
-                # Preserve existing wires mapping by storing wires per point_id
-                saved_wires = {}
-                for cp in getattr(item, 'connection_points', []):
-                    if hasattr(cp, 'connected_wires'):
-                        saved_wires[cp.point_id] = cp.connected_wires[:]
-                item.remove_connection_points()
-                item.create_connection_points()
-                # Attempt to reattach wires to matching point_ids
-                for cp in item.connection_points:
-                    if cp.point_id in saved_wires:
-                        for wire in saved_wires[cp.point_id]:
-                            # Update wire endpoints if they referenced old point
-                            if hasattr(wire, 'start_point') and wire.start_point.point_id == cp.point_id:
-                                wire.start_point = cp
-                            if hasattr(wire, 'end_point') and wire.end_point.point_id == cp.point_id:
-                                wire.end_point = cp
-                            cp.connected_wires.append(wire)
-                            wire.update_position()
-        if hasattr(self, 'log_panel'):
-            self.log_panel.log_message("[INFO] Connection points refreshed for all components")
+        if self.component_manager:
+            self.component_manager.refresh_all_connection_points()
 
     def is_connection_allowed(self, point_a, point_b):
-        """Return True if a wire may connect the two points.
-        Rules:
-        - Disallow out->out connections
-        - Disallow connections within the same component
-        """
-        pid_a = getattr(point_a, 'point_id', '')
-        pid_b = getattr(point_b, 'point_id', '')
-
-        # Block out-out in either order
-        if pid_a == 'out' and pid_b == 'out':
-            return False
-
-        # Block connections to the same component
-        parent_a = getattr(point_a, 'parent_component', None)
-        parent_b = getattr(point_b, 'parent_component', None)
-
-        if parent_a is not None and parent_b is not None and parent_a is parent_b:
-            return False
-
-        return True
+        """Return True if a wire may connect the two points."""
+        if self.wire_manager:
+            return self.wire_manager.is_connection_allowed(point_a, point_b)
+        return False
 
     def _update_led_states(self, simulation_result):
         """Update LED component states based on simulation results"""
@@ -1633,56 +1265,25 @@ class MainWindow(QMainWindow):
 
     def _find_wires_between_components(self, comp1_name: str, comp2_name: str):
         """Find all wires connecting two components by their backend names"""
-        wires = []
-
-        # First, find the components by matching their backend names
-        # Backend names are like '1', '2' for resistors, 'voltage_source', 'ground1', etc.
-        comp1_items = self._find_components_by_backend_name(comp1_name)
-        comp2_items = self._find_components_by_backend_name(comp2_name)
-
-        if not comp1_items or not comp2_items:
-            return wires
-
-        # Find wires connecting any combination of these components
-        for wire in self.scene.items():
-            if not isinstance(wire, Wire):
-                continue
-
-            # Get the wire's endpoints
-            start_point = getattr(wire, 'start_point', None)
-            end_point = getattr(wire, 'end_point', None)
-
-            if not start_point or not end_point:
-                continue
-
-            # Check if wire connects the two components (directly or via junctions)
-            start_component = self._get_component_for_point(start_point)
-            end_component = self._get_component_for_point(end_point)
-
-            # Check if this wire connects our target components
-            if ((start_component in comp1_items and end_component in comp2_items) or
-                (start_component in comp2_items and end_component in comp1_items)):
-                wires.append(wire)
-
-        return wires
+        if self.wire_manager:
+            return self.wire_manager.find_wires_between_components(
+                comp1_name, comp2_name, self.component_name_mapping
+            )
+        return []
 
     def _find_components_by_backend_name(self, backend_name: str):
         """Find components in the scene that match a backend component name"""
-        components = []
-
-        # Use the stored mapping if available
-        if backend_name in self.component_name_mapping:
-            component = self.component_name_mapping[backend_name]
-            if component in self.scene.items():
-                components.append(component)
-
-        return components
+        if self.wire_manager:
+            return self.wire_manager._find_components_by_backend_name(
+                backend_name, self.component_name_mapping
+            )
+        return []
 
     def _get_component_for_point(self, point):
         """Get the component that owns a connection point"""
-        # For connection points, get parent component
-        parent = getattr(point, 'parent_component', None)
-        return parent
+        if self.wire_manager:
+            return self.wire_manager._get_component_for_point(point)
+        return None
 
     def closeEvent(self, event):
         """Handle close event - prompt to save if there are unsaved changes"""

@@ -2,7 +2,7 @@
 
 from typing import Dict, List, Set, Tuple, Optional
 from PyQt6.QtWidgets import QGraphicsScene
-from components import Wire, ComponentItem
+from circuit_designer.components import Wire, ComponentItem
 
 
 class NetlistBuilder:

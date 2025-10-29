@@ -1,276 +1,136 @@
-# ECis-full
+# Circuit Designer
 
-A PyQt6-based electronic circuit simulation application for designing and analyzing electronic circuits.
+A PyQt6-based electronic circuit design and simulation application with PySpice integration.
 
-## Features
+## ✨ Features
 
-### Circuit Design
-- **Drag and Drop**: Electronic components (resistors, voltage sources, current sources, etc.)
-- **Interactive Canvas**: Grid-based component placement with snapping
-- **Wire Connections**: Connect components with visual wires
-- **Component Properties**: Edit component values, names, and orientations
-- **Rotation**: Rotate components with `R` key (90° increments)
+- 🎨 **Visual Circuit Design** - Drag-and-drop component placement
+- ⚡ **Circuit Simulation** - Powered by PySpice/ngspice  
+- 💾 **Project Management** - Save and load circuit projects
+- 🔧 **Component Library** - Resistors, voltage sources, LEDs, switches, and ground
+- ↩️ **Undo/Redo** - Full undo/redo support
+- 📊 **Simulation Output** - View node voltages and circuit analysis
+- ⌨️ **Keyboard Shortcuts** - Efficient workflow
 
-### Editing & Navigation
-- **Undo/Redo**: Full undo/redo support for all actions (`Ctrl+Z` / `Ctrl+Shift+Z`)
-- **Copy/Paste**: Duplicate components easily (`Ctrl+C` / `Ctrl+V`)
-- **Selection Tools**: Select all, deselect, delete selected items
-- **Zoom & Pan**: Navigate large circuit designs with mouse wheel or keyboard
-- **Middle-click Panning**: Pan the canvas with middle mouse button
+## 🚀 Quick Start
 
-### Project Management
-- **Visual Project Browser**: Grid view with thumbnails of all projects
-- **Search & Filter**: Real-time search to find projects by name
-- **Sort Options**: Sort by name (A-Z/Z-A) or last modified (newest/oldest)
-- **Auto-save**: Projects automatically save to default directory
-- **Export Copies**: Share projects by exporting to any location
-- **Project Thumbnails**: Preview circuits before opening
-- **Quick Actions**: Right-click to rename or delete projects
+### Installation
 
-### Simulation & Analysis
-- **Netlist Generation**: Automatically builds netlists for backend simulation
-- **SPICE Export**: Generates SPICE-compatible netlists
-- **Circuit Validation**: Detects floating nodes, missing connections, and errors
-- **Backend Ready**: Clean API for integration with simulation engines
+1. **Install ngspice** (for circuit simulation):
+   ```bash
+   # Arch Linux
+   sudo pacman -S ngspice
 
-### Export & Sharing
-- **PNG Export**: Export circuit diagrams as high-quality images (`Ctrl+E`)
-- **Project Copy**: Save copies for sharing without affecting originals
+   # Ubuntu/Debian
+   sudo apt install ngspice
 
-### Customization
-- **Keyboard Shortcuts**: Customize all keyboard shortcuts via Settings menu
-- **Shortcuts Manager**: View, edit, and reset shortcuts to defaults
-- **Conflict Detection**: Prevents duplicate shortcut assignments
+   # macOS
+   brew install ngspice
+   ```
 
-## Project Structure
+2. **Install Python dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-- `main_window.py` - Main application window and core functionality
-- `components/` - Circuit component classes and graphics items
-- `ui/` - User interface panels and managers
-- `.ecis` files - ECis project save files (JSON format)
+### Run the Application
 
-## Requirements
-
-- Python 3.7+ (tested newer too; on Arch you may have 3.13)
-- PyQt6
-
-Only PyQt6 is currently required (verified by code search – no other third‑party imports).
-
-## Installation (Generic / Cross‑Platform)
-
-1. (Recommended) Create a virtual environment:
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
-```
-2. Upgrade pip (inside the venv):
-```bash
-python -m pip install --upgrade pip
-```
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-4. Run the application:
-```bash
-python main_window.py
+python3 app.py
 ```
 
-## Arch Linux Setup
-On Arch, Python is system-managed (PEP 668). Installing into the system interpreter without a venv is blocked unless you use --break-system-packages. Prefer one of the safe options below.
-
-### Option A: Use system packages only (quickest)
+Or use the launcher script:
 ```bash
-sudo pacman -S --needed python python-pyqt6
-python main_window.py
+./run.sh
 ```
 
-### Option B: Use pip in a virtual environment (recommended for development)
-If `python-pip` is not installed yet:
-```bash
-sudo pacman -S --needed python-pip
-```
-Then create & use a venv (keeps global site-packages untouched):
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-python main_window.py
-```
+## 📖 Usage
 
-### Option C (NOT recommended): Install into system Python
-You could force install with:
-```bash
-python -m ensurepip --upgrade  # may fail on Arch
-python -m pip install --user PyQt6
-```
-If pip complains about the externally-managed environment, add `--break-system-packages` (but this can cause maintenance headaches). Prefer Options A or B instead.
-
-### Wayland vs X11
-If you are on Wayland and encounter rendering issues, try forcing the XCB platform:
-```bash
-QT_QPA_PLATFORM=xcb python main_window.py
-```
-Or explicitly use Wayland (if Qt Wayland plugins are installed):
-```bash
-QT_QPA_PLATFORM=wayland python main_window.py
-```
-
-## Usage
-Run the application once dependencies are installed:
-```bash
-python main_window.py
-```
+1. **Add Components**: Drag from the left panel onto the canvas
+2. **Connect Wires**: Click connection points (colored dots) to create wires  
+3. **Set Values**: Select a component and edit value in Inspect Panel (right side)
+4. **Run Simulation**: Press `F5` or click "Run Simulation"
 
 ### Keyboard Shortcuts
 
-#### File Operations
-- `Ctrl+N` - New project
-- `Ctrl+O` - Open project (opens project browser)
-- `Ctrl+S` - Save project (to default projects directory)
-- `Ctrl+Shift+S` - Save copy (to any location for sharing)
-- `Ctrl+E` - Export as PNG
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+N` | New project |
+| `Ctrl+O` | Open project |
+| `Ctrl+S` | Save project |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Shift+Z` | Redo |
+| `F5` | Run simulation |
+| `Delete` | Delete selected |
+| `R` | Rotate component |
+| `Ctrl+=` / `Ctrl+-` | Zoom in/out |
 
-#### Editing
-- `Ctrl+Z` - Undo
-- `Ctrl+Shift+Z` - Redo
-- `Ctrl+C` - Copy selected components
-- `Ctrl+V` - Paste components
-- `Ctrl+A` - Select all
-- `Ctrl+D` - Deselect all
-- `Delete` - Delete selected items
-- `Escape` - Clear selection
+## 📁 Project Structure
 
-#### Component Operations
-- `R` - Rotate selected component 90° clockwise
-- `Shift+R` - Rotate selected component 90° counter-clockwise
-
-#### View Navigation
-- `Ctrl+=` / `Ctrl+-` - Zoom in/out
-- `Ctrl+0` - Reset zoom
-- `Home` - Center view
-- `Arrow keys` - Pan canvas
-- `Middle mouse button` - Pan (drag)
-- `Ctrl+Mouse wheel` - Zoom
-
-#### Simulation
-- `F5` - Run simulation / Generate netlist
-- `Shift+F5` - Stop simulation
-
-#### Other
-- `F1` - Focus canvas
-- `Ctrl+L` - Clear log
-- `Ctrl+Shift+C` - Copy simulation output
-
-### Menu Bar
-
-The application includes a full menu bar for easy access to all features:
-
-#### File Menu
-- New, Open, Save, Save Copy
-- Export as PNG
-
-#### Edit Menu
-- Undo, Redo
-- Copy, Paste
-- Select All, Deselect All
-
-#### View Menu
-- Zoom controls
-- Center View, Focus Canvas
-- Clear Log
-
-#### Simulation Menu
-- Run, Stop
-- Copy Output
-
-#### Settings Menu
-- **Keyboard Shortcuts**: Customize all shortcuts
-  - Click on any shortcut to change it
-  - Press your desired key combination
-  - Reset to defaults button available
-  - Conflict detection prevents duplicate shortcuts
-
-#### Help Menu
-- About ECis-full
-
-## Components
-
-The application supports various electronic components:
-- Resistors
-- Voltage sources
-- Current sources
-- Ground connections
-- Junction points for wire connections
-
-## Project Management
-
-### Project Browser
-The application features a visual project browser for easy project management:
-- **Grid view** with project thumbnails (200x200px previews)
-- **Auto-saves** to `~/PycharmProjects/circuit-designer-app/projects/` by default
-- **Visual previews** of each project's circuit layout
-- **Quick actions**: Double-click to open, right-click to rename/delete
-- **Timestamps** showing when each project was last saved
-
-### Saving Projects
-- **Save (Ctrl+S)**: Saves to the default projects directory for quick access
-- **Save Copy (Ctrl+Shift+S)**: Export a copy anywhere (e.g., Downloads for sharing)
-- All projects include embedded thumbnails for the browser
-
-## Backend Integration
-
-The application generates netlists for simulation backends:
-
-```python
-# The netlist is generated when pressing F5
-netlist = {
-    "components": [
-        {
-            "name": "R1",
-            "type": "Resistor",
-            "value": "1k",
-            "nodes": [
-                {"node": "n1", "pin": "in"},
-                {"node": "n2", "pin": "out"}
-            ]
-        },
-        ...
-    ],
-    "nodes": {
-        "n0": [...],  # Ground node
-        "n1": [...],
-        "n2": [...]
-    },
-    "ground_node": "n0",
-    "errors": [...]  # Validation errors/warnings
-}
+```
+circuit-designer-app/
+├── app.py                    # Application entry point ⭐ Start here
+├── circuit_designer/         # Main package
+│   ├── core/                 # Core application (main window)
+│   ├── components/           # Circuit components (resistor, wire, etc.)
+│   ├── simulation/           # PySpice simulation engine
+│   ├── ui/                   # User interface
+│   │   ├── panels/           # UI panels (components, inspect, log)
+│   │   ├── dialogs/          # Dialogs
+│   │   ├── widgets/          # Custom widgets
+│   │   └── managers/         # Toolbar & shortcut managers
+│   ├── project/              # Project & circuit management
+│   └── utils/                # Utilities (spatial grid, etc.)
+├── tests/                    # Test suite
+├── docs/                     # Documentation
+└── projects/                 # Your saved projects (.ecis files)
 ```
 
-The netlist builder (`ui/netlist_builder.py`) provides:
-- **Node connectivity analysis**: Automatically groups connected pins into nodes
-- **SPICE export**: Convert to SPICE format for simulation
-- **Validation**: Detect floating nodes, missing values, disconnected components
-- **Clean API**: Easy integration with any simulation engine
+## 🔧 Development
 
-To integrate your simulation backend, modify `main_window.py:on_run()` to pass the netlist to your solver.
+### Running Tests
 
-## File Format
+```bash
+python3 -m pytest tests/
+```
 
-Projects are saved as `.ecis` files in JSON format containing:
-- Component data (type, position, value, orientation)
-- Wire connection information
-- Project metadata (thumbnail, save timestamp, version)
+### Code Organization
 
-## Troubleshooting
+The codebase was recently reorganized for better maintainability:
 
-| Issue | Cause | Fix |
-|-------|-------|-----|
-| `ModuleNotFoundError: No module named 'PyQt6'` | PyQt6 not installed | Follow Arch Option A or B above |
-| `pip: command not found` | `python-pip` not installed on Arch | `sudo pacman -S python-pip` then create venv |
-| Qt crashes / blank window on Wayland | Platform plugin mismatch | Set `QT_QPA_PLATFORM=xcb` |
+- **Before**: Single 1700+ line `main_window.py` file
+- **After**: Modular structure with clear separation of concerns
 
-## License
+See `docs/REORGANIZATION_PLAN.md` for details.
 
-This project is open source.
+## 📚 Documentation
+
+- `docs/QUICK_START.md` - Getting started guide
+- `docs/REFACTORING_SUMMARY.md` - Code improvements and optimizations
+- `docs/REORGANIZATION_PLAN.md` - Project structure details
+
+## ❓ Troubleshooting
+
+**"Unsupported Ngspice version" warning**  
+→ This is harmless. PySpice works with newer ngspice versions.
+
+**Simulation not running**  
+→ Check: ngspice installed, all components have values, circuit has ground
+
+**Import errors**  
+→ Run from project root: `python3 app.py`
+
+## 📝 License
+
+[Add your license]
+
+## 👏 Acknowledgments
+
+- Built with PyQt6
+- Simulation: PySpice & ngspice
+- Inspired by modern EDA tools
+
+---
+
+**Version**: 1.0.0  
+**Status**: Production Ready ✅
