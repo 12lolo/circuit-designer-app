@@ -116,6 +116,12 @@ class MainWindow(QMainWindow):
         self.setupSandboxSection()
         self.setupInspectSection()
 
+        # Set initial splitter sizes: side panels get 20% each, canvas gets 60%
+        # This will be adjusted on first show based on actual window size
+        self.splitterMain.setStretchFactor(0, 1)  # Components panel
+        self.splitterMain.setStretchFactor(1, 3)  # Canvas (gets most space)
+        self.splitterMain.setStretchFactor(2, 1)  # Inspect panel
+
         # Setup log section (will add log panel as second widget of vertical splitter)
         self.setupLogSection()
 
@@ -166,7 +172,8 @@ class MainWindow(QMainWindow):
             self.graphicsViewSandbox,
             self.inspect_panel,
             self.log_panel,
-            self.undo_stack
+            self.undo_stack,
+            self.component_manager
         )
 
         # Draw grid now that canvas manager is initialized
@@ -214,16 +221,12 @@ class MainWindow(QMainWindow):
 
         # Create floating controls overlay and position it
         try:
-            self._floating_controls = self.canvas_tools.get_floating_widget(self.graphicsViewSandbox.viewport())
+            # Make FloatingControls a child of the view itself, not the viewport
+            # This ensures it stays fixed when scrolling
+            self._floating_controls = self.canvas_tools.get_floating_widget(self.graphicsViewSandbox)
             self._position_floating_controls()
-            # Track viewport resizes to reposition overlay
-            self.graphicsViewSandbox.viewport().installEventFilter(self)
-            # Also track panning via scrollbars to keep overlay attached to viewport corners
-            try:
-                self.graphicsViewSandbox.horizontalScrollBar().valueChanged.connect(lambda _: self._position_floating_controls())
-                self.graphicsViewSandbox.verticalScrollBar().valueChanged.connect(lambda _: self._position_floating_controls())
-            except Exception:
-                pass
+            # The FloatingControls widget has its own event filter that keeps it anchored
+            # No need to track scrollbars - the widget stays fixed automatically
         except Exception:
             # Fallback: ignore floating controls if creation fails
             self._floating_controls = None
@@ -233,14 +236,22 @@ class MainWindow(QMainWindow):
         if self.canvas_manager:
             self.canvas_manager.position_floating_controls()
 
-    def eventFilter(self, obj, event):
-        # Reposition floating controls when the canvas viewport resizes
-        if obj is getattr(self.graphicsViewSandbox, 'viewport', lambda: None)() and event.type() == QEvent.Type.Resize:
-            self._position_floating_controls()
-        return super().eventFilter(obj, event)
-
     def showEvent(self, event):
         super().showEvent(event)
+
+        # Set initial splitter sizes on first show (20vw for side panels)
+        if not hasattr(self, '_splitter_initialized'):
+            self._splitter_initialized = True
+            try:
+                window_width = self.width()
+                side_panel_width = int(window_width * 0.20)  # 20% for each side panel
+                canvas_width = window_width - (2 * side_panel_width)  # Remaining for canvas
+
+                # Set initial sizes
+                self.splitterMain.setSizes([side_panel_width, canvas_width, side_panel_width])
+            except Exception:
+                pass
+
         # Ensure overlay is positioned after initial show and layout
         try:
             QTimer.singleShot(0, self._position_floating_controls)
@@ -928,22 +939,31 @@ class MainWindow(QMainWindow):
                     output_lines.append("Details:")
                     output_lines.append(result['details'])
 
+                # Show popup for validation errors (user-friendly)
+                if result.get('error_type') == 'ValidationError':
+                    QMessageBox.warning(
+                        self,
+                        "Circuit Validation Failed",
+                        f"{result.get('error', 'Circuit validation failed')}\n\n{result.get('details', '')}",
+                        QMessageBox.StandardButton.Ok
+                    )
+
                 # Special handling for PySpice not installed
-                if result.get('error_type') == 'ImportError':
+                elif result.get('error_type') == 'ImportError':
                     output_lines.append("")
                     output_lines.append("PySpice is not installed. To install it, run:")
                     output_lines.append("  pip install PySpice")
                     output_lines.append("")
                     output_lines.append("Note: PySpice requires ngspice to be installed on your system.")
 
-                # Show traceback if available
-                if result.get('traceback'):
+                # Show traceback if available (but not for validation errors - those are user errors, not bugs)
+                if result.get('traceback') and result.get('error_type') != 'ValidationError':
                     output_lines.append("")
                     output_lines.append("=== Traceback ===")
                     output_lines.append(result['traceback'])
 
-                # Show debug data if available
-                if result.get('debug_data'):
+                # Show debug data if available (but not for validation errors)
+                if result.get('debug_data') and result.get('error_type') != 'ValidationError':
                     debug_data = result['debug_data']
                     output_lines.append("")
                     output_lines.append("=== Debug Information ===")

@@ -151,6 +151,7 @@ class CanvasTools(QObject):
             super().__init__(parent)
             self.setObjectName("canvasFloatingControls")
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
             self.setMouseTracking(True)
             self._dragging = False
             self._drag_start_pos = QPointF()
@@ -170,6 +171,8 @@ class CanvasTools(QObject):
                     parent.installEventFilter(self)
                 except Exception:
                     pass
+            # Ensure the widget stays on top
+            self.raise_()
 
         def set_anchor(self, anchor: str):
             if anchor in ("top-left", "top-right", "bottom-left", "bottom-right"):
@@ -183,19 +186,41 @@ class CanvasTools(QObject):
             parent = self.parentWidget()
             if not parent:
                 return QPointF(0, 0)
-            parent_w = parent.width()
-            parent_h = parent.height()
+
+            # If parent is a QGraphicsView, use viewport dimensions
+            # Otherwise use parent dimensions
+            try:
+                from PyQt6.QtWidgets import QGraphicsView
+                if isinstance(parent, QGraphicsView):
+                    viewport = parent.viewport()
+                    # Get viewport geometry relative to parent
+                    viewport_rect = viewport.geometry()
+                    parent_w = viewport_rect.width()
+                    parent_h = viewport_rect.height()
+                    offset_x = viewport_rect.x()
+                    offset_y = viewport_rect.y()
+                else:
+                    parent_w = parent.width()
+                    parent_h = parent.height()
+                    offset_x = 0
+                    offset_y = 0
+            except:
+                parent_w = parent.width()
+                parent_h = parent.height()
+                offset_x = 0
+                offset_y = 0
+
             w = self.width()
             h = self.height()
             m = self.margin
             if self.anchor == 'top-left':
-                return QPointF(m, m)
+                return QPointF(offset_x + m, offset_y + m)
             if self.anchor == 'top-right':
-                return QPointF(parent_w - w - m, m)
+                return QPointF(offset_x + parent_w - w - m, offset_y + m)
             if self.anchor == 'bottom-left':
-                return QPointF(m, parent_h - h - m)
+                return QPointF(offset_x + m, offset_y + parent_h - h - m)
             # bottom-right default
-            return QPointF(parent_w - w - m, parent_h - h - m)
+            return QPointF(offset_x + parent_w - w - m, offset_y + parent_h - h - m)
 
         def reposition_to_anchor(self):
             pos = self.compute_anchor_pos()
@@ -207,6 +232,22 @@ class CanvasTools(QObject):
             parent = self.parentWidget()
             if not parent:
                 return x, y
+
+            # If parent is a QGraphicsView, clamp to viewport area
+            try:
+                from PyQt6.QtWidgets import QGraphicsView
+                if isinstance(parent, QGraphicsView):
+                    viewport = parent.viewport()
+                    viewport_rect = viewport.geometry()
+                    max_x = max(viewport_rect.x(), viewport_rect.x() + viewport_rect.width() - self.width())
+                    max_y = max(viewport_rect.y(), viewport_rect.y() + viewport_rect.height() - self.height())
+                    min_x = viewport_rect.x()
+                    min_y = viewport_rect.y()
+                    return max(min_x, min(x, max_x)), max(min_y, min(y, max_y))
+            except:
+                pass
+
+            # Default: clamp to parent bounds
             max_x = max(0, parent.width() - self.width())
             max_y = max(0, parent.height() - self.height())
             return max(0, min(x, max_x)), max(0, min(y, max_y))
@@ -259,14 +300,35 @@ class CanvasTools(QObject):
             if self._dragging and event.button() == Qt.MouseButton.LeftButton:
                 self._dragging = False
                 self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
-                # Snap to nearest corner of parent
+                # Snap to nearest corner of parent (or viewport if parent is QGraphicsView)
                 parent = self.parentWidget()
                 if parent:
+                    # Get effective dimensions (viewport if QGraphicsView, else parent)
+                    try:
+                        from PyQt6.QtWidgets import QGraphicsView
+                        if isinstance(parent, QGraphicsView):
+                            viewport = parent.viewport()
+                            viewport_rect = viewport.geometry()
+                            offset_x = viewport_rect.x()
+                            offset_y = viewport_rect.y()
+                            parent_w = viewport_rect.width()
+                            parent_h = viewport_rect.height()
+                        else:
+                            offset_x = 0
+                            offset_y = 0
+                            parent_w = parent.width()
+                            parent_h = parent.height()
+                    except:
+                        offset_x = 0
+                        offset_y = 0
+                        parent_w = parent.width()
+                        parent_h = parent.height()
+
                     corners = {
-                        'top-left': QPointF(self.margin, self.margin),
-                        'top-right': QPointF(parent.width() - self.width() - self.margin, self.margin),
-                        'bottom-left': QPointF(self.margin, parent.height() - self.height() - self.margin),
-                        'bottom-right': QPointF(parent.width() - self.width() - self.margin, parent.height() - self.height() - self.margin),
+                        'top-left': QPointF(offset_x + self.margin, offset_y + self.margin),
+                        'top-right': QPointF(offset_x + parent_w - self.width() - self.margin, offset_y + self.margin),
+                        'bottom-left': QPointF(offset_x + self.margin, offset_y + parent_h - self.height() - self.margin),
+                        'bottom-right': QPointF(offset_x + parent_w - self.width() - self.margin, offset_y + parent_h - self.height() - self.margin),
                     }
                     # compute distance from widget center to each corner target
                     center = QPointF(self.x() + self.width() / 2, self.y() + self.height() / 2)
@@ -292,12 +354,19 @@ class CanvasTools(QObject):
                 self.unsetCursor()
             super().leaveEvent(event)
 
+        def paintEvent(self, event):
+            """Override paint event to ensure widget stays visible and on top"""
+            super().paintEvent(event)
+            # Ensure we stay on top whenever repainted
+            self.raise_()
+
         def eventFilter(self, watched, event):
             """Keep the overlay anchored to the viewport; react to parent geometry updates."""
             try:
                 if watched is self.parentWidget():
                     if event.type() in (QEvent.Type.Resize, QEvent.Type.Move, QEvent.Type.Show, QEvent.Type.LayoutRequest):
                         self.reposition_to_anchor()
+                        self.raise_()  # Ensure we stay on top
                 return False
             except Exception:
                 return False

@@ -267,23 +267,62 @@ class BackendSimulator:
     def _validate_circuit(self, circuit_grid: Dict) -> Dict:
         """Validate circuit before simulation"""
         errors = []
+        warnings = []
 
         # Check if there's at least one voltage source
         has_voltage_source = False
         has_ground = False
+        disconnected_components = []
 
         for name, data in circuit_grid.items():
-            if data['type'] == 'voltage_source':
+            comp_type = data['type']
+            connections = data.get('connections', [])
+
+            if comp_type == 'voltage_source':
                 has_voltage_source = True
                 # Check if voltage source has a value
                 if data.get('value', 0) == 0:
                     errors.append(f"Voltage source '{name}' has no value set")
-            elif data['type'] == 'ground':
+                # Check if voltage source has proper connections
+                if len(connections) < 1:
+                    errors.append(f"Voltage source '{name}' is not connected to any components")
+                    disconnected_components.append(name)
+                elif len(connections) < 2:
+                    warnings.append(f"Voltage source '{name}' may not have enough connections (needs 2 terminals)")
+
+            elif comp_type == 'ground':
                 has_ground = True
-            elif data['type'] == 'resistor':
+                # Ground should have at least one connection
+                if len(connections) < 1:
+                    errors.append(f"Ground '{name}' is not connected to any components")
+                    disconnected_components.append(name)
+
+            elif comp_type == 'resistor':
                 # Check if resistor has a value
                 if data.get('value', 0) <= 0:
                     errors.append(f"Resistor '{name}' has invalid value: {data.get('value', 0)}")
+                # Check if resistor has connections
+                if len(connections) < 1:
+                    errors.append(f"Resistor '{name}' is not connected to any components")
+                    disconnected_components.append(name)
+                elif len(connections) < 2:
+                    warnings.append(f"Resistor '{name}' may not have enough connections (needs 2 terminals)")
+
+            elif comp_type == 'led':
+                # Check if LED has connections
+                if len(connections) < 1:
+                    errors.append(f"LED '{name}' is not connected to any components")
+                    disconnected_components.append(name)
+                elif len(connections) < 2:
+                    warnings.append(f"LED '{name}' may not have enough connections (needs 2 terminals)")
+
+            elif comp_type == 'switch':
+                # Check if switch has connections
+                if len(connections) < 1:
+                    errors.append(f"Switch '{name}' is not connected to any components")
+                    disconnected_components.append(name)
+                elif len(connections) < 2:
+                    warnings.append(f"Switch '{name}' may not have enough connections (needs 2 terminals)")
 
         if not has_voltage_source:
             return {
@@ -299,12 +338,24 @@ class BackendSimulator:
                 'details': 'Add a GND component to your circuit'
             }
 
+        if disconnected_components:
+            return {
+                'valid': False,
+                'error': f'Circuit has {len(disconnected_components)} disconnected component(s)',
+                'details': f'The following components are not connected:\n' + '\n'.join(f'  • {name}' for name in disconnected_components) + '\n\nConnect all components with wires before simulating.'
+            }
+
         if errors:
             return {
                 'valid': False,
-                'error': 'Circuit has invalid component values',
+                'error': 'Circuit has validation errors',
                 'details': '\n'.join(errors)
             }
+
+        # Warnings don't prevent simulation, but we could log them
+        if warnings:
+            # Could log these, but don't fail validation
+            pass
 
         return {'valid': True}
 

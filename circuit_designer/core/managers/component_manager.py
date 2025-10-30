@@ -94,8 +94,12 @@ class ComponentManager:
         if footprint_free(start_x, start_y):
             return start_x, start_y
 
-        # Spiral search
-        for radius in range(1, 40):
+        # Spiral search - limit radius to grid size to prevent searching outside bounds
+        # For a 15x15 grid, max useful search is about 20 cells (diagonal)
+        grid_size_estimate = max(max_gx - min_gx, max_gy - min_gy)
+        max_search_radius = min(grid_size_estimate + 5, 20)  # Cap at 20 cells
+
+        for radius in range(1, max_search_radius):
             for dx in range(-radius, radius + 1):
                 for dy in range(-radius, radius + 1):
                     if abs(dx) != radius and abs(dy) != radius:
