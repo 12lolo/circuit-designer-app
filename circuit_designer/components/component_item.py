@@ -62,13 +62,13 @@ class ComponentItem(QGraphicsRectItem):
     def get_default_value(self):
         """Get default value based on component type"""
         if self.component_type == "Resistor":
-            return "1Ω"
+            return "1kΩ"
         elif self.component_type == "Vdc":
             return "5V"
         elif self.component_type == "Switch":
-            return "Open"
+            return "Closed"
         elif self.component_type == "LED":
-            return "Off"
+            return "100Ω"  # Default LED resistance
         elif self.component_type == "GND":
             return "0V"
         return ""
@@ -106,7 +106,7 @@ class ComponentItem(QGraphicsRectItem):
         return QPointF(0, 0)
 
     def rotate_component(self, degrees):
-        """Rotate the component by the specified degrees keeping the anchor fixed on the grid."""
+        """Rotate the component by the specified degrees keeping the bounding rect anchor fixed on the grid."""
         # Store existing wire connections before rotation
         old_connections = []
         for point in self.connection_points:
@@ -116,8 +116,9 @@ class ComponentItem(QGraphicsRectItem):
                 elif hasattr(wire, 'end_point') and wire.end_point == point:
                     old_connections.append((wire, 'end', point.point_id))
 
-        # Record anchor scene position BEFORE rotation
-        old_anchor_scene = self.mapToScene(self.get_anchor_local_pos())
+        # Record the top-left corner of bounding rect BEFORE rotation
+        old_rect = self.sceneBoundingRect()
+        old_top_left = QPointF(old_rect.left(), old_rect.top())
 
         # Update orientation (normalize to 0,90,180,270)
         self.orientation = (self.orientation + degrees) % 360
@@ -125,14 +126,15 @@ class ComponentItem(QGraphicsRectItem):
         # Update transform origin (may change due to orientation affecting effective dimensions)
         self.update_transform_origin()
 
-        # Apply rotation about anchor
+        # Apply rotation
         self.setRotation(self.orientation)
 
-        # After rotation, compute new anchor scene position and compensate translation
-        new_anchor_scene = self.mapToScene(self.get_anchor_local_pos())
-        delta = old_anchor_scene - new_anchor_scene
+        # After rotation, get new bounding rect top-left and compensate to keep it in same place
+        new_rect = self.sceneBoundingRect()
+        new_top_left = QPointF(new_rect.left(), new_rect.top())
+        delta = old_top_left - new_top_left
         if abs(delta.x()) > 0.01 or abs(delta.y()) > 0.01:
-            # Move so anchor stays where it was
+            # Move so top-left of bounding rect stays where it was
             self.setPos(self.pos() + delta)
 
         # Recreate connection points with new positions
@@ -333,10 +335,8 @@ class ComponentItem(QGraphicsRectItem):
         super().mouseReleaseEvent(event)
 
     def snap_to_grid(self):
-        """Snap anchor (dynamic per component) to nearest grid junction.
-        Keeps full footprint inside grid bounds. After moving anchor, apply a single global
-        correction so at least one connection point is perfectly on-grid. This guarantees both
-        logical junction alignment for backend and consistent visual placement.
+        """Snap component's bounding rect to nearest grid junction.
+        Keeps full footprint inside grid bounds. Uses sceneBoundingRect() which accounts for rotation.
         """
         if not self.scene():
             return
@@ -345,49 +345,42 @@ class ComponentItem(QGraphicsRectItem):
             return
         view = views[0]
         g = self.grid_spacing
-        anchor_local = self.get_anchor_local_pos()
-        anchor_scene = self.mapToScene(anchor_local)
-        # Compute snapped anchor target
-        snapped_x = round(anchor_scene.x() / g) * g
-        snapped_y = round(anchor_scene.y() / g) * g
-        # Clamp within grid
+        
+        # Get current bounding rect in scene coordinates (accounts for rotation)
+        scene_rect = self.sceneBoundingRect()
+        current_top_left_x = scene_rect.left()
+        current_top_left_y = scene_rect.top()
+        
+        # Compute snapped position for top-left corner
+        snapped_x = round(current_top_left_x / g) * g
+        snapped_y = round(current_top_left_y / g) * g
+        
+        # Clamp within grid bounds
         if hasattr(view, 'grid_rect') and view.grid_rect:
             grid_left, grid_top, grid_w, grid_h = view.grid_rect
             grid_right = grid_left + grid_w
             grid_bottom = grid_top + grid_h
-            eff_w_cells, eff_h_cells = self.compute_effective_cell_dimensions()
-            comp_w = eff_w_cells * g
-            comp_h = eff_h_cells * g
-            # Determine tentative top-left of component given desired anchor position.
-            # We need to know how anchor_local relates to top-left (0,0) of rect.
-            # So delta_local = anchor_local - (0,0) = anchor_local.
-            # Top-left scene if anchor at (snapped_x, snapped_y) becomes (snapped_x - anchor_local.x(), snapped_y - anchor_local.y())
-            top_left_x = snapped_x - anchor_local.x()
-            top_left_y = snapped_y - anchor_local.y()
-            # Clamp top-left so full rect inside bounds
+            
+            # Get the bounding rect dimensions
+            comp_w = scene_rect.width()
+            comp_h = scene_rect.height()
+            
+            # Clamp top-left so full rect stays inside bounds
             min_top_left_x = grid_left
             max_top_left_x = grid_right - comp_w
             min_top_left_y = grid_top
             max_top_left_y = grid_bottom - comp_h
-            clamped_top_left_x = max(min_top_left_x, min(max_top_left_x, top_left_x))
-            clamped_top_left_y = max(min_top_left_y, min(max_top_left_y, top_left_y))
-            # Recalculate anchor target if we had to clamp
-            snapped_x = clamped_top_left_x + anchor_local.x()
-            snapped_y = clamped_top_left_y + anchor_local.y()
+            
+            snapped_x = max(min_top_left_x, min(max_top_left_x, snapped_x))
+            snapped_y = max(min_top_left_y, min(max_top_left_y, snapped_y))
+        
+        # Calculate the offset needed
+        delta_x = snapped_x - current_top_left_x
+        delta_y = snapped_y - current_top_left_y
+        
         # Apply translation
-        delta_x = snapped_x - anchor_scene.x()
-        delta_y = snapped_y - anchor_scene.y()
         if abs(delta_x) > 0.01 or abs(delta_y) > 0.01:
             self.setPos(self.pos() + QPointF(delta_x, delta_y))
-        # Final minor correction based on first connection point if any
-        if self.connection_points:
-            first_cp = self.connection_points[0]
-            cp_scene = first_cp.get_scene_pos()
-            target_x = round(cp_scene.x() / g) * g
-            target_y = round(cp_scene.y() / g) * g
-            adjust = QPointF(target_x - cp_scene.x(), target_y - cp_scene.y())
-            if abs(adjust.x()) > 0.01 or abs(adjust.y()) > 0.01:
-                self.setPos(self.pos() + adjust)
 
     def update_connected_wires(self):
         """Update positions of all wires connected to this component"""
@@ -634,24 +627,39 @@ class ComponentItem(QGraphicsRectItem):
         return icon_item
 
     def get_display_grid_position(self):
-        """Return integer grid indices (gx, gy) of the anchor (dynamic per component)."""
+        """Return integer grid indices (gx, gy) of the anchor (top-left of bounding box in scene)."""
         if not self.scene() or not self.scene().views():
             return 0, 0
         g = self.grid_spacing
-        anchor_scene = self.mapToScene(self.get_anchor_local_pos())
-        return int(round(anchor_scene.x() / g)), int(round(anchor_scene.y() / g))
+        
+        # Get the scene bounding rectangle (accounts for rotation)
+        scene_rect = self.sceneBoundingRect()
+        
+        # The anchor is the top-left corner of the bounding rectangle
+        anchor_x = scene_rect.left()
+        anchor_y = scene_rect.top()
+        
+        return int(round(anchor_x / g)), int(round(anchor_y / g))
 
     def move_to_grid_position(self, gx, gy):
-        """Reposition component so its display grid position (center) becomes (gx, gy).
+        """Reposition component so its display grid position (top-left of bounding rect) becomes (gx, gy).
         Keeps rotation & anchor logic intact, then reapplies snapping and wire updates."""
         if not self.scene() or not self.scene().views():
             return
         g = self.grid_spacing
-        target_center = QPointF(gx * g, gy * g)
-        current_center = self.mapToScene(self.get_anchor_local_pos())
-        delta = target_center - current_center
+        
+        # Target position for top-left of bounding rect
+        target_pos = QPointF(gx * g, gy * g)
+        
+        # Current top-left of bounding rect
+        scene_rect = self.sceneBoundingRect()
+        current_top_left = QPointF(scene_rect.left(), scene_rect.top())
+        
+        # Calculate offset needed
+        delta = target_pos - current_top_left
         if abs(delta.x()) > 0.01 or abs(delta.y()) > 0.01:
             self.setPos(self.pos() + delta)
+        
         # Finalize with grid snap to enforce anchor/grid alignment and adjust minor errors
         self.snap_to_grid()
         self.update_connected_wires()
@@ -660,16 +668,14 @@ class ComponentItem(QGraphicsRectItem):
         """Return a set of (gx, gy) cells occupied by this component based on its orientation.
         If base_gx/base_gy provided, treat that as anchor grid coordinate instead of current.
         Anchor grid coordinate corresponds to get_display_grid_position().
-        Horizontal (eff_w >= eff_h) extends along +x; vertical along +y."""
+        Fills all cells in the eff_w x eff_h rectangle."""
         gx, gy = self.get_display_grid_position()
         if base_gx is not None and base_gy is not None:
             gx, gy = base_gx, base_gy
         eff_w, eff_h = self.compute_effective_cell_dimensions()
         cells = set()
-        if eff_w >= eff_h:  # treat as horizontal footprint
-            for dx in range(eff_w):
-                cells.add((gx + dx, gy))
-        else:  # vertical footprint
+        # Fill all cells in the rectangular footprint
+        for dx in range(eff_w):
             for dy in range(eff_h):
-                cells.add((gx, gy + dy))
+                cells.add((gx + dx, gy + dy))
         return cells

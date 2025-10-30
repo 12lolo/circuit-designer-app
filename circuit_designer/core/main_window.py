@@ -444,10 +444,18 @@ class MainWindow(QMainWindow):
 
         # Handle component rotation for selected items (with undo support)
         if key == Qt.Key.Key_R and not (modifiers & Qt.KeyboardModifier.ControlModifier):
-            if self.selected_component and hasattr(self.selected_component, 'component_type'):
+            # Get all currently selected components
+            selected_items = self.scene.selectedItems()
+            selected_components = [item for item in selected_items if hasattr(item, 'component_type')]
+            
+            if selected_components:
                 angle = -90 if modifiers & Qt.KeyboardModifier.ShiftModifier else 90
-                command = RotateComponentCommand(self.selected_component, angle, f"Rotate {self.selected_component.component_type}")
-                self.undo_stack.push(command)
+                
+                # Rotate each selected component
+                for component in selected_components:
+                    command = RotateComponentCommand(component, angle, f"Rotate {component.component_type}")
+                    self.undo_stack.push(command)
+                
                 event.accept()
                 return
 

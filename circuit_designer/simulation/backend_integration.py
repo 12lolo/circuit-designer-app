@@ -42,6 +42,9 @@ class BackendSimulator:
             return 1e9  # Very high resistance for open switch (essentially infinite)
         elif value_str_stripped == "Closed":
             return 0.001  # Very low resistance for closed switch (essentially zero)
+        elif value_str_stripped == "Off":
+            # LED "Off" state - use default LED resistance
+            return 100.0  # 100 ohms default for LED
 
         # Remove spaces and convert to uppercase for easier parsing
         value_str = value_str.strip().upper()
@@ -170,10 +173,14 @@ class BackendSimulator:
             # Parse value (convert to int if whole number, otherwise float)
             value = None
             if hasattr(component, 'value') and component.value:
+                print(f"DEBUG: Component {backend_type} at {coord} - raw value: '{component.value}'")
                 value = self.parse_value(component.value, component_type)
+                print(f"DEBUG: Component {backend_type} at {coord} - parsed value: {value}")
                 # Convert to int if it's a whole number
                 if value == int(value):
                     value = int(value)
+            else:
+                print(f"DEBUG: Component {backend_type} at {coord} - NO VALUE")
 
             # Generate simple component name
             component_name = self._generate_component_name(backend_type, name_counters)
@@ -187,12 +194,24 @@ class BackendSimulator:
                 'connections': connections
             }
 
-            # Add value only for components that need it
-            if backend_type in ['resistor', 'voltage_source', 'switch', 'led'] and value is not None:
-                circuit_grid[component_name]['value'] = value
-            # For LED, set default resistance if no value specified
-            elif backend_type == 'led' and value is None:
-                circuit_grid[component_name]['value'] = 100  # Default LED resistance in ohms
+            # Add value only for components that need it, with defaults for missing values
+            if backend_type in ['resistor', 'voltage_source', 'switch', 'led']:
+                if value is not None:
+                    circuit_grid[component_name]['value'] = value
+                else:
+                    # Set reasonable defaults for components without values
+                    if backend_type == 'resistor':
+                        circuit_grid[component_name]['value'] = 1000  # 1kΩ default
+                        print(f"DEBUG: Resistor '{component_name}' - using default 1kΩ")
+                    elif backend_type == 'voltage_source':
+                        circuit_grid[component_name]['value'] = 5  # 5V default
+                        print(f"DEBUG: Voltage source '{component_name}' - using default 5V")
+                    elif backend_type == 'switch':
+                        circuit_grid[component_name]['value'] = 0.001  # Closed by default
+                        print(f"DEBUG: Switch '{component_name}' - using default Closed (0.001Ω)")
+                    elif backend_type == 'led':
+                        circuit_grid[component_name]['value'] = 100  # 100Ω default
+                        print(f"DEBUG: LED '{component_name}' - using default 100Ω")
 
         # Add wires with connections mapped to component coordinates
         wire_counter = 0

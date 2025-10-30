@@ -91,10 +91,26 @@ class ValueInputWidget(QLineEdit):
 
 
     def auto_format(self):
-        """Auto-add unit if missing"""
+        """Auto-add unit if missing and validate input"""
         text = self.text().strip()
         if not text:
             return
+
+        # Validate the value
+        value = self.parse_value()
+        if value is None:
+            # Invalid input - show error styling and revert to previous valid value
+            self.setStyleSheet("QLineEdit { padding-right: 20px; border: 2px solid red; }")
+            # Store original value if we have one
+            if hasattr(self, '_last_valid_value'):
+                self.setText(self._last_valid_value)
+            else:
+                self.clear()
+            return
+        else:
+            # Valid input - clear error styling and store as last valid value
+            self.setStyleSheet("QLineEdit { padding-right: 20px; }")
+            self._last_valid_value = self.text()
 
         # If it already has the unit, do nothing
         if self.unit in text:
@@ -103,9 +119,10 @@ class ValueInputWidget(QLineEdit):
         # If it's just a number or has a prefix (k, M, m, etc.), add unit
         if re.match(r'^[\d.]+[kmMuUnNpPgG]?$', text, re.IGNORECASE):
             self.setText(text + self.unit)
+            self._last_valid_value = self.text()
 
     def parse_value(self):
-        """Parse the current value to a base number"""
+        """Parse the current value to a base number. Returns None if invalid."""
         text = self.text().strip().upper()
         if not text:
             return 0.0
@@ -139,15 +156,24 @@ class ValueInputWidget(QLineEdit):
         match = re.match(r'([\d.]+)\s*([A-Z]*)', text)
         if not match:
             try:
-                return float(text)
+                value = float(text)
+                # Reject negative values
+                if value < 0:
+                    return None
+                return value
             except:
-                return 0.0
+                # Invalid text/format
+                return None
 
         number_str, prefix = match.groups()
         try:
             number = float(number_str)
+            # Reject negative values
+            if number < 0:
+                return None
         except:
-            return 0.0
+            # Invalid number format
+            return None
 
         # Apply multiplier
         if prefix and prefix in multipliers:
@@ -190,6 +216,10 @@ class ValueInputWidget(QLineEdit):
     def increment(self):
         """Increment the value"""
         current_value = self.parse_value()
+        
+        # If parse returned None (invalid), default to 0
+        if current_value is None:
+            current_value = 0
 
         # Check if shift is pressed
         modifiers = QApplication.keyboardModifiers()
@@ -206,10 +236,15 @@ class ValueInputWidget(QLineEdit):
 
         # Update text
         self.setText(self.format_value(new_value))
+        self._last_valid_value = self.text()
 
     def decrement(self):
         """Decrement the value"""
         current_value = self.parse_value()
+        
+        # If parse returned None (invalid), default to 0
+        if current_value is None:
+            current_value = 0
 
         # Check if shift is pressed
         modifiers = QApplication.keyboardModifiers()
@@ -226,3 +261,4 @@ class ValueInputWidget(QLineEdit):
 
         # Update text
         self.setText(self.format_value(new_value))
+        self._last_valid_value = self.text()
